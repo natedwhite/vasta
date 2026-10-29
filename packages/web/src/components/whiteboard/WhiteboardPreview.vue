@@ -1,0 +1,316 @@
+<script setup lang="ts">
+// Read-only miniature of a whiteboard, shown where one is embedded in a page or gallery.
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { useRouter } from 'vue-router'
+import type { Id, ObjectRecord, ObjectSummary } from '@vasta/core'
+import AppIcon from '../AppIcon.vue'
+import { api } from '../../lib/api.ts'
+import { onChange } from '../../lib/events.ts'
+import { getConnectorGeometry, getShapeFill, getStrokeDash, isLine, shapePath, stickyStyle } from './shapes.ts'
+import type { WhiteboardData, WhiteboardScene } from './types.ts'
+import WhiteboardObjectCard from './WhiteboardObjectCard.vue'
+
+const props = withDefaults(
+  defineProps<{
+    objectId: Id
+    object?: ObjectRecord | ObjectSummary | null
+    interactive?: boolean
+    sceneId?: string | null
+  }>(),
+  { interactive: true, sceneId: null }
+)
+
+const emit = defineEmits<{
+  (e: 'selectScene', sceneId: string | null): void
+}>()
+
+const router = useRouter()
+const fetchedObject = ref<ObjectRecord | null>(null)
+const selected = ref(false)
+
+async function load() {
+  if (props.object && props.object.props?.whiteboardData) {
+    fetchedObject.value = props.object as ObjectRecord
+    return
+  }
+  fetchedObject.value = await api.object(props.objectId).catch(() => null)
+}
+
+onMounted(() => {
+  load()
+  if (props.interactive) {
+    window.addEventListener('pointerdown', onWindowPointerDown)
+  }
+})
+
+watch(() => props.objectId, load)
+watch(() => props.object, load, { deep: true })
+const stop = onChange(() => load())
+onBeforeUnmount(() => {
+  stop()
+  if (props.interactive) {
+    window.removeEventListener('pointerdown', onWindowPointerDown)
+  }
+})
+
+const rootEl = ref<HTMLElement | null>(null)
+function onWindowPointerDown(e: PointerEvent) {
+  if (!rootEl.value || !selected.value) return
+  if (!rootEl.value.contains(e.target as Node)) {
+    selected.value = false
+  }
+}
+
+const targetObject = computed(() => (props.object as ObjectRecord) || fetchedObject.value)
+
+const data = computed<WhiteboardData | null>(() => {
+  const raw = targetObject.value?.props?.whiteboardData as unknown
+  try {
+    const str =
+      typeof raw === 'string'
+        ? raw
+        : raw && typeof raw === 'object' && 'value' in raw && typeof (raw as { value: unknown }).value === 'string'
+          ? (raw as { value: string }).value
+          : null
+    const parsed = str ? JSON.parse(str) : raw
+    return parsed && typeof parsed === 'object' && ('strokes' in parsed || 'shapes' in parsed || 'cards' in parsed || 'stickies' in parsed)
+      ? (parsed as WhiteboardData)
+      : null
+  } catch {
+    return null
+  }
+})
+
+function path(points: { x: number; y: number }[]) {
+  return points.map((p, i) => `${i ? 'L' : 'M'}${p.x} ${p.y}`).join(' ')
+}
+
+const scenes = computed<WhiteboardScene[]>(() => data.value?.scenes || [])
+const localSceneId = ref<string | null>(props.sceneId)
+watch(() => props.sceneId, (val) => {
+  localSceneId.value = val
+})
+
+const effectiveSceneId = computed(() => localSceneId.value ?? props.sceneId)
+const isAuto = computed(() => effectiveSceneId.value === 'auto')
+
+const currentScene = computed<WhiteboardScene | null>(() => {
+  if (isAuto.value) return null
+  const scs = scenes.value
+  if (!scs.length) return null
+  if (effectiveSceneId.value && effectiveSceneId.value !== 'auto') {
+    const s = scs.find((item) => item.id === effectiveSceneId.value)
+    if (s) return s
+  }
+  if (!effectiveSceneId.value) {
+    if (data.value?.defaultSceneId) {
+      const s = scs.find((item) => item.id === data.value?.defaultSceneId)
+      if (s) return s
+    }
+    const def = scs.find((item) => item.isDefault)
+    if (def) return def
+  }
+  return null
+})
+
+const activeSelectValue = computed(() => {
+  if (isAuto.value || !currentScene.value) return 'auto'
+  return currentScene.value.id
+})
+
+const renderedShapes = computed(() =>
+  (data.value?.shapes ?? []).map((s) => ({
+    shape: s,
+    line: isLine(s),
+    connector: isLine(s) ? getConnectorGeometry(s) : null,
+  })),
+)
+
+/** The box around everything on the board, with a margin, or the user's custom thumbnailRect / selected Scene. */
+const box = computed(() => {
+  if (!isAuto.value && currentScene.value && currentScene.value.rect.w > 0 && currentScene.value.rect.h > 0) {
+    return { ...currentScene.value.rect, empty: false }
+  }
+  if (!isAuto.value) {
+    const d = data.value
+    if (d?.thumbnailRect && d.thumbnailRect.w > 0 && d.thumbnailRect.h > 0) {
+      return { ...d.thumbnailRect, empty: false }
+    }
+  }
+  const d = data.value
+  const xs: number[] = []
+  const ys: number[] = []
+  for (const s of d?.strokes ?? []) for (const p of s.points) { xs.push(p.x); ys.push(p.y) }
+  for (const s of d?.shapes ?? []) { xs.push(s.x, s.x + s.width); ys.push(s.y, s.y + s.height) }
+  for (const c of [...(d?.cards ?? []), ...(d?.stickies ?? [])]) { xs.push(c.x, c.x + c.width); ys.push(c.y, c.y + c.height) }
+  if (!xs.length) return { x: 0, y: 0, w: 600, h: 300, empty: true }
+  const pad = 30
+  const x = Math.min(...xs) - pad
+  const y = Math.min(...ys) - pad
+  return { x, y, w: Math.max(...xs) + pad - x, h: Math.max(...ys) + pad - y, empty: false }
+})
+
+function onSceneSelect(val: string) {
+  localSceneId.value = val
+  emit('selectScene', val)
+}
+
+function handleClick() {
+  if (!props.interactive) return
+  selected.value = true
+}
+
+function open() {
+  router.push(`/o/${props.objectId}`)
+}
+</script>
+
+<template>
+  <div
+    ref="rootEl"
+    class="group relative block overflow-hidden rounded-xl border border-line bg-surface text-left shadow-sm transition"
+    :class="[
+      interactive ? 'cursor-pointer hover:border-line-strong' : '',
+      selected ? 'ring-2 ring-primary ring-offset-2 border-primary' : '',
+    ]"
+    data-whiteboard-embed
+    @click="handleClick"
+    @dblclick="open"
+  >
+    <svg class="h-full w-full text-ink" :viewBox="`${box.x} ${box.y} ${box.w} ${box.h}`" preserveAspectRatio="xMidYMid meet">
+      <!-- Ink Strokes -->
+      <path
+        v-for="s in data?.strokes ?? []"
+        :key="s.id"
+        :d="path(s.points)"
+        :stroke="s.color"
+        :stroke-width="s.width"
+        :stroke-dasharray="getStrokeDash(s.style)"
+        :opacity="s.style === 'marker' ? 0.45 : 1"
+        stroke-linecap="round"
+        stroke-linejoin="round"
+        fill="none"
+      />
+      <!-- Shapes & Connectors -->
+      <g
+        v-for="{ shape: s, line, connector } in renderedShapes"
+        :key="s.id"
+        :transform="!line && s.rotation ? `rotate(${s.rotation} ${s.x + s.width / 2} ${s.y + s.height / 2})` : undefined"
+      >
+        <template v-if="connector">
+          <path
+            :d="connector.shaftPath"
+            :stroke="s.color"
+            :stroke-width="s.strokeWidth || 2.5"
+            :stroke-dasharray="getStrokeDash(s.strokeStyle)"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+            fill="none"
+          />
+          <path
+            v-if="connector.startHead"
+            :d="connector.startHead"
+            :fill="s.color"
+            :stroke="s.color"
+            stroke-width="1"
+          />
+          <path
+            v-if="connector.endHead"
+            :d="connector.endHead"
+            :fill="s.color"
+            :stroke="s.color"
+            stroke-width="1"
+          />
+        </template>
+        <path
+          v-else
+          :d="shapePath(s)"
+          :stroke="s.color"
+          :stroke-width="s.strokeWidth || 2.5"
+          :stroke-dasharray="getStrokeDash(s.strokeStyle)"
+          :fill="getShapeFill(s)"
+          stroke-linecap="round"
+          stroke-linejoin="round"
+        />
+      </g>
+      <!-- Stickies -->
+      <g v-for="s in data?.stickies ?? []" :key="s.id">
+        <rect :x="s.x" :y="s.y" :width="s.width" :height="s.height" rx="10" :fill="stickyStyle(s.color).bg" :stroke="stickyStyle(s.color).border" />
+        <foreignObject :x="s.x + 8" :y="s.y + 8" :width="s.width - 16" :height="s.height - 16">
+          <div xmlns="http://www.w3.org/1999/xhtml" :style="{ fontSize: '13px', color: stickyStyle(s.color).text, whiteSpace: 'pre-wrap', overflow: 'hidden', height: '100%' }">{{ s.text }}</div>
+        </foreignObject>
+      </g>
+      <!-- Cards -->
+      <g
+        v-for="c in data?.cards ?? []"
+        :key="c.id"
+        :transform="c.rotation ? `rotate(${c.rotation} ${c.x + c.width / 2} ${c.y + c.height / 2})` : undefined"
+      >
+        <foreignObject :x="c.x" :y="c.y" :width="c.width" :height="Math.max(c.height, 400)" class="overflow-visible">
+          <div xmlns="http://www.w3.org/1999/xhtml" class="relative h-full w-full overflow-visible">
+            <WhiteboardObjectCard
+              :card="{ ...c, x: 0, y: 0, rotation: 0 }"
+              :interactive="false"
+            />
+          </div>
+        </foreignObject>
+      </g>
+    </svg>
+    <span v-if="box.empty" class="absolute inset-0 grid place-items-center text-sm text-ink-faint">Empty whiteboard</span>
+    <span class="absolute left-2 top-2 flex items-center gap-1 rounded-md bg-surface/90 px-1.5 py-0.5 text-[11px] font-medium text-ink-soft ring-1 ring-line pointer-events-none">
+      <AppIcon fallback="ph:chalkboard-teacher" :size="12" />{{ targetObject?.title || 'Whiteboard' }}
+      <template v-if="currentScene">
+        <span class="text-ink-faint">/</span>
+        <AppIcon fallback="ph:film-slate" :size="11" class="text-primary" />
+        <span class="text-primary font-semibold">{{ currentScene.name }}</span>
+      </template>
+      <template v-else-if="isAuto">
+        <span class="text-ink-faint">/</span>
+        <span class="text-primary font-semibold">Auto</span>
+      </template>
+    </span>
+
+    <!-- Interactive Selection Action: Scene Selector & Edit Button -->
+    <div
+      v-if="interactive && (selected || 'group-hover:opacity-100')"
+      class="absolute right-2 top-2 z-10 flex items-center gap-1.5 transition-opacity"
+      :class="selected ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'"
+      @click.stop
+    >
+      <!-- Scene Selector Dropdown when scenes exist (styled to match edit button) -->
+      <label
+        v-if="scenes.length > 0"
+        class="relative flex h-6 cursor-pointer items-center gap-1 rounded-md bg-surface/95 px-2 text-[11px] font-semibold text-ink shadow-xs ring-1 ring-line hover:bg-surface hover:text-primary transition-all backdrop-blur-sm"
+        title="Choose Scene for this embed"
+      >
+        <AppIcon fallback="ph:film-slate" :size="12" class="text-primary shrink-0" />
+        <span class="truncate max-w-[100px]">{{ activeSelectValue === 'auto' ? 'Auto' : (scenes.find(s => s.id === activeSelectValue)?.name || 'Scene') }}</span>
+        <AppIcon fallback="ph:caret-down" :size="10" class="text-ink-soft shrink-0" />
+        <select
+          :value="activeSelectValue"
+          class="absolute inset-0 h-full w-full opacity-0 cursor-pointer"
+          title="Choose Scene for this embed"
+          @change="onSceneSelect(($event.target as HTMLSelectElement).value)"
+        >
+          <option value="auto">Auto</option>
+          <option
+            v-for="s in scenes"
+            :key="s.id"
+            :value="s.id"
+          >
+            {{ s.name }}
+          </option>
+        </select>
+      </label>
+
+      <button
+        class="flex h-6 items-center gap-1 rounded-md bg-surface/95 px-2 text-[11px] font-semibold text-ink shadow-xs ring-1 ring-line hover:bg-surface hover:text-primary transition-all backdrop-blur-sm"
+        title="Edit whiteboard"
+        @click.stop="open"
+      >
+        <AppIcon fallback="ph:arrow-square-out" :size="12" />
+        <span>Edit</span>
+      </button>
+    </div>
+  </div>
+</template>

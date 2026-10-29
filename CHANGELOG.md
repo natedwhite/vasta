@@ -6,6 +6,13 @@ GitHub release page.
 
 ## Unreleased
 
+### Added
+
+- **Whiteboards.** Create an infinite canvas for freehand ink (with Apple Pencil and touch support),
+  shapes, connectors (straight, curved, and angled), sticky notes, and live cards for any Vasta
+  object or query. Define named **Scenes** to frame specific regions of a board and embed either the
+  full board or a specific scene inside any document with `/Whiteboard` or `![[Board]]`.
+
 ### Changed
 
 - **The toggle's arrow** is bigger and sits centered on the title's line; the lines inside line up

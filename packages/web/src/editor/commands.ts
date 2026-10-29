@@ -110,6 +110,20 @@ export const slashCommands: SlashCommand[] = [
     },
   },
   {
+    id: 'whiteboard',
+    label: 'Whiteboard',
+    icon: 'ph:ScribbleLoop',
+    keywords: 'sketch canvas draw diagram board',
+    // Creates a whiteboard object and embeds a live preview on the page.
+    run: async (e, r) => {
+      const type = systemType('whiteboard')
+      if (!type) return
+      chain(e, r).run()
+      const wb = await createObject(type.id, { title: 'Whiteboard' }, false)
+      e.chain().focus().insertContent({ type: 'objectEmbed', attrs: { objectId: wb.id, display: 'embed' } }).run()
+    },
+  },
+  {
     id: 'embed',
     label: 'Embed object',
     icon: 'ph:cards',

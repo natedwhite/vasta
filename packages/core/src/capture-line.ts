@@ -389,7 +389,7 @@ export function lineAsks(templates: ObjectRecord[], type: ObjectType, line: stri
 
 /** Types the app's quick capture and ⌘K offer after "/": the ones made from a title and properties alone. */
 export function isCapturable(type: ObjectType): boolean {
-  return !type.deletedAt && !['daily-note', 'date', 'query', 'weblink', 'image', 'pdf', 'audio', 'video', 'file', 'quote'].includes(type.system ?? '')
+  return !type.deletedAt && !['daily-note', 'date', 'query', 'weblink', 'image', 'pdf', 'audio', 'video', 'file', 'quote', 'whiteboard'].includes(type.system ?? '')
 }
 
 /**

@@ -105,6 +105,18 @@ describe('markdown', () => {
     expect(markdownToDoc(markdown).content).toEqual(doc.content)
   })
 
+  it('keeps whiteboard scene embeds as #s- links', () => {
+    const doc: Doc = {
+      type: 'doc',
+      content: [
+        { type: 'objectEmbed', attrs: { objectId: 'wb1', display: 'embed', sceneId: 'scene-42' } },
+      ],
+    }
+    const markdown = docToMarkdown(doc, { titleOf: () => 'Architecture' })
+    expect(markdown).toBe('![Architecture](vasta://o/wb1#s-scene-42)')
+    expect(markdownToDoc(markdown).content).toEqual(doc.content)
+  })
+
   it('keeps a Mermaid diagram as a mermaid code block, so agents read and write diagrams', () => {
     const diagram = '```mermaid\nflowchart LR\n  A[Idea] --> B[Note]\n```'
     const doc = markdownToDoc(diagram)

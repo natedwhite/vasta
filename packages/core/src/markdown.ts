@@ -9,7 +9,7 @@
 import { Marked, type Token, type Tokens } from 'marked'
 import type { Doc, DocMark, DocNode, Id } from './model.ts'
 
-const OBJECT_LINK = /^vasta:\/\/o\/([^/?#\s]+)(?:#b-([A-Za-z0-9]+))?$/
+const OBJECT_LINK = /^vasta:\/\/o\/([^/?#\s]+)(?:#(?:b-([A-Za-z0-9]+)|s-([A-Za-z0-9_-]+)))?$/
 
 /** The object a vasta://o/<id> link points to. */
 export function objectIdOfLink(href: string): Id | undefined {
@@ -21,7 +21,13 @@ export function blockIdOfLink(href: string): string | undefined {
   return OBJECT_LINK.exec(href)?.[2]
 }
 
-export const objectLink = (id: Id, blockId?: string | null) => `vasta://o/${id}${blockId ? `#b-${blockId}` : ''}`
+/** The whiteboard scene a vasta://o/<id>#s-<scene> link points to. */
+export function sceneIdOfLink(href: string): string | undefined {
+  return OBJECT_LINK.exec(href)?.[3]
+}
+
+export const objectLink = (id: Id, blockId?: string | null, sceneId?: string | null) =>
+  `vasta://o/${id}${blockId ? `#b-${blockId}` : sceneId ? `#s-${sceneId}` : ''}`
 
 /** A block mention's link text: the object's title, then the block's. */
 const BLOCK_SEPARATOR = ' › '
@@ -137,7 +143,7 @@ function block(node: DocNode, options: ToMarkdownOptions): string {
       return blocks(node.content, options)
     case 'objectEmbed': {
       const id = String(node.attrs?.objectId)
-      return `![${escapeText(options.titleOf?.(id) ?? '')}](${objectLink(id, node.attrs?.blockId as string | null | undefined)})`
+      return `![${escapeText(options.titleOf?.(id) ?? '')}](${objectLink(id, node.attrs?.blockId as string | null | undefined, node.attrs?.sceneId as string | null | undefined)})`
     }
     case 'table': {
       const rows = (node.content ?? []).map((row) => (row.content ?? []).map((cell) => cellText(cell).replace(/\|/g, '\\|')))
@@ -228,7 +234,9 @@ function inlineNodes(tokens: Token[] | undefined, marks: DocMark[] = []): DocNod
         const image = token as Tokens.Image
         const id = objectIdOfLink(image.href)
         const blockId = blockIdOfLink(image.href)
+        const sceneId = sceneIdOfLink(image.href)
         if (id && blockId) out.push({ type: 'objectEmbed', attrs: { objectId: id, display: 'block', blockId } })
+        else if (id && sceneId) out.push({ type: 'objectEmbed', attrs: { objectId: id, display: 'embed', sceneId } })
         else if (id) out.push({ type: 'objectEmbed', attrs: { objectId: id, display: 'card' } })
         else out.push({ type: 'text', text: image.text || image.href, marks: [...marks, { type: 'link', attrs: { href: image.href } }] })
         break
