@@ -120,7 +120,7 @@ export function getConnectorIconPaths(
 }
 
 export const toolBtn = (active: boolean) =>
-  active ? 'text-ink' : 'text-ink-soft hover:bg-hover hover:text-ink'
+  active ? 'bg-primary/15 text-primary ring-1 ring-primary/40 shadow-xs' : 'text-ink-soft hover:bg-hover hover:text-ink'
 
 export function useToolSettings(
   getDrawMode: () => DrawMode,
@@ -237,7 +237,7 @@ export function useToolSettings(
   const currentColor = ref(initialPreset.color)
   const currentWidth = ref(initialPreset.width)
   const eraserMode = ref<'pixel' | 'object'>('pixel')
-  const eraserSize = ref(18)
+  const eraserSize = ref(16)
   const currentStickyColor = ref('amber')
   const currentStickyTextColor = ref('#0f172a')
   const currentStickyFontSize = ref<StickyFontSize>('md')

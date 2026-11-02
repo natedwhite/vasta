@@ -83,6 +83,32 @@ const {
   isCardPropertyShown,
   toggleCardProperty,
 } = inject(WHITEBOARD_CTX)!
+
+function isClosestOrEqual(val: number | undefined, target: number, list: number[]): boolean {
+  if (val === undefined || val === null) return target === list[0]
+  if (val === target) return true
+  if (list.includes(val)) return false
+  let closest = list[0]!
+  let minDiff = Math.abs(val - closest)
+  for (const item of list) {
+    const diff = Math.abs(val - item)
+    if (diff < minDiff) {
+      minDiff = diff
+      closest = item
+    }
+  }
+  return closest === target
+}
+
+function isColorActive(current: string | undefined, swatch: string): boolean {
+  if (!current) return false
+  return current.toLowerCase() === swatch.toLowerCase()
+}
+
+function isCustomColorActive(current: string | undefined, palette: string[]): boolean {
+  if (!current) return false
+  return !palette.some((c) => c.toLowerCase() === current.toLowerCase())
+}
 </script>
 
 <template>
@@ -362,11 +388,11 @@ const {
           :key="idx"
           class="relative flex h-6 w-full items-center justify-center rounded-md transition-transform hover:scale-110 ring-1 ring-black/10"
           :style="{ backgroundColor: c }"
-          :class="(selectionOutlineColor || '').toLowerCase() === c.toLowerCase() ? 'ring-2 ring-primary ring-offset-2 scale-105' : ''"
+          :class="isColorActive(selectionOutlineColor, c) ? 'ring-2 ring-primary ring-offset-2 scale-105' : 'opacity-85 hover:opacity-100'"
           @click.stop="handleSwatchClick(c, idx, selectionOutlineColor, setSelectionColor, 'sel_outline')"
         >
           <AppIcon
-            v-if="(selectionOutlineColor || '').toLowerCase() === c.toLowerCase()"
+            v-if="isColorActive(selectionOutlineColor, c)"
             fallback="ph:pencil-simple"
             :size="11"
             :class="isBrightColor(c) ? 'text-black/80' : 'text-white/90'"
@@ -375,14 +401,18 @@ const {
             type="color"
             :value="c"
             class="absolute inset-0 opacity-0 cursor-pointer"
-            :class="(selectionOutlineColor || '').toLowerCase() === c.toLowerCase() ? 'h-full w-full pointer-events-auto z-10' : 'h-0 w-0 pointer-events-none'"
+            :class="isColorActive(selectionOutlineColor, c) ? 'h-full w-full pointer-events-auto z-10' : 'h-0 w-0 pointer-events-none'"
             :ref="(el) => registerColorInput(`sel_outline_${idx}`, el)"
             @input="handleSwatchInput($event, idx, setSelectionColor)"
             @change="handleSwatchInput($event, idx, setSelectionColor)"
           />
         </button>
-        <label class="relative flex h-6 w-full cursor-pointer items-center justify-center rounded-md border border-line bg-surface hover:bg-hover transition-transform hover:scale-110 shadow-xs" title="Custom color">
-          <AppIcon fallback="ph:paint-brush" :size="12" class="text-ink-soft" />
+        <label
+          class="relative flex h-6 w-full cursor-pointer items-center justify-center rounded-md border transition-transform hover:scale-110 shadow-xs"
+          :class="isCustomColorActive(selectionOutlineColor, activePalette) ? 'border-primary bg-primary/10 text-primary ring-2 ring-primary ring-offset-1 scale-105' : 'border-line bg-surface hover:bg-hover text-ink-soft'"
+          title="Custom color"
+        >
+          <AppIcon fallback="ph:paint-brush" :size="12" />
           <input type="color" :value="selectionOutlineColor" class="absolute inset-0 opacity-0 cursor-pointer w-full h-full" @input="setSelectionColor(($event.target as HTMLInputElement).value)" />
         </label>
       </div>
@@ -390,10 +420,10 @@ const {
       <span class="text-[10px] font-bold uppercase tracking-wider text-ink-faint mt-1">Weight</span>
       <div class="flex gap-1">
         <button
-          v-for="w in [2, 4, 8, 16]"
+          v-for="w in [2, 3, 5, 8]"
           :key="w"
           class="flex h-7 flex-1 items-center justify-center rounded-lg border transition-all"
-          :class="selectionStrokeWidth === w ? 'border-primary bg-primary/10 text-primary' : 'border-line hover:bg-hover text-ink-soft'"
+          :class="isClosestOrEqual(selectionStrokeWidth, w, [2, 3, 5, 8]) ? 'border-primary bg-primary/10 text-primary' : 'border-line hover:bg-hover text-ink-soft'"
           :title="`${w}px`"
           @click="setSelectionStrokeWidth(w)"
         >
@@ -403,7 +433,7 @@ const {
 
       <span class="text-[10px] font-bold uppercase tracking-wider text-ink-faint mt-1">Style</span>
       <div class="flex gap-1">
-        <button class="flex h-7 flex-1 items-center justify-center rounded-lg border transition-all" :class="selectionStrokeStyle === 'solid' ? 'border-primary bg-primary/10 text-primary' : 'border-line hover:bg-hover text-ink-soft'" title="Solid" @click="setSelectionStrokeStyle('solid')">
+        <button class="flex h-7 flex-1 items-center justify-center rounded-lg border transition-all" :class="(selectionStrokeStyle || 'solid') === 'solid' ? 'border-primary bg-primary/10 text-primary' : 'border-line hover:bg-hover text-ink-soft'" title="Solid" @click="setSelectionStrokeStyle('solid')">
           <div class="h-0.5 w-6 bg-current rounded" />
         </button>
         <button class="flex h-7 flex-1 items-center justify-center rounded-lg border transition-all" :class="selectionStrokeStyle === 'dashed' ? 'border-primary bg-primary/10 text-primary' : 'border-line hover:bg-hover text-ink-soft'" title="Dashed" @click="setSelectionStrokeStyle('dashed')">
@@ -421,7 +451,7 @@ const {
       <div class="grid grid-cols-2 gap-1.5">
         <button
           class="flex items-center gap-1.5 px-2 py-1.5 rounded-lg border text-xs transition-all"
-          :class="selectionShapeFill === 'none' ? 'border-primary bg-primary/10 text-primary font-medium' : 'border-line hover:bg-hover text-ink-soft'"
+          :class="(selectionShapeFill || 'none') === 'none' ? 'border-primary bg-primary/10 text-primary font-medium' : 'border-line hover:bg-hover text-ink-soft'"
           @click.stop="setSelectionFill('none')"
         >
           <AppIcon fallback="ph:prohibit" :size="14" />
@@ -461,11 +491,11 @@ const {
             :key="idx"
             class="relative flex h-6 w-full items-center justify-center rounded-md transition-transform hover:scale-110 ring-1 ring-black/10"
             :style="{ backgroundColor: c }"
-            :class="(selectionShapeFillColor || '').toLowerCase() === c.toLowerCase() ? 'ring-2 ring-primary ring-offset-2 scale-105' : ''"
+            :class="isColorActive(selectionShapeFillColor, c) ? 'ring-2 ring-primary ring-offset-2 scale-105' : 'opacity-85 hover:opacity-100'"
             @click.stop="handleSwatchClick(c, idx, selectionShapeFillColor, setSelectionFillColor, 'sel_fill')"
           >
             <AppIcon
-              v-if="(selectionShapeFillColor || '').toLowerCase() === c.toLowerCase()"
+              v-if="isColorActive(selectionShapeFillColor, c)"
               fallback="ph:pencil-simple"
               :size="11"
               :class="isBrightColor(c) ? 'text-black/80' : 'text-white/90'"
@@ -474,14 +504,18 @@ const {
               type="color"
               :value="c"
               class="absolute inset-0 opacity-0 cursor-pointer"
-              :class="(selectionShapeFillColor || '').toLowerCase() === c.toLowerCase() ? 'h-full w-full pointer-events-auto z-10' : 'h-0 w-0 pointer-events-none'"
+              :class="isColorActive(selectionShapeFillColor, c) ? 'h-full w-full pointer-events-auto z-10' : 'h-0 w-0 pointer-events-none'"
               :ref="(el) => registerColorInput(`sel_fill_${idx}`, el)"
               @input="handleSwatchInput($event, idx, setSelectionFillColor)"
               @change="handleSwatchInput($event, idx, setSelectionFillColor)"
             />
           </button>
-          <label class="relative flex h-6 w-full cursor-pointer items-center justify-center rounded-md border border-line bg-surface hover:bg-hover transition-transform hover:scale-110 shadow-xs" title="Custom color">
-            <AppIcon fallback="ph:paint-brush" :size="12" class="text-ink-soft" />
+          <label
+            class="relative flex h-6 w-full cursor-pointer items-center justify-center rounded-md border transition-transform hover:scale-110 shadow-xs"
+            :class="isCustomColorActive(selectionShapeFillColor, activePalette) ? 'border-primary bg-primary/10 text-primary ring-2 ring-primary ring-offset-1 scale-105' : 'border-line bg-surface hover:bg-hover text-ink-soft'"
+            title="Custom color"
+          >
+            <AppIcon fallback="ph:paint-brush" :size="12" />
             <input type="color" :value="selectionShapeFillColor" class="absolute inset-0 opacity-0 cursor-pointer w-full h-full" @input="setSelectionFillColor(($event.target as HTMLInputElement).value)" />
           </label>
         </div>
@@ -497,12 +531,12 @@ const {
           :key="name"
           class="relative flex h-6 w-full items-center justify-center rounded-md ring-1 ring-black/10 transition-transform hover:scale-110"
           :style="{ backgroundColor: st.bg }"
-          :class="(selectionPrimaryColor === name || (selectionPrimaryColor || '').toLowerCase() === st.bg.toLowerCase()) ? 'ring-2 ring-primary ring-offset-1 scale-105' : ''"
+          :class="((selectionPrimaryColor || 'amber') === name || (selectionPrimaryColor || '').toLowerCase() === st.bg.toLowerCase()) ? 'ring-2 ring-primary ring-offset-1 scale-105' : ''"
           :title="name"
           @click="handleStickySwatchClick(name, st.bg, selectionPrimaryColor, setSelectionStickyColor, 'sel_sticky')"
         >
           <AppIcon
-            v-if="selectionPrimaryColor === name || (selectionPrimaryColor || '').toLowerCase() === st.bg.toLowerCase()"
+            v-if="(selectionPrimaryColor || 'amber') === name || (selectionPrimaryColor || '').toLowerCase() === st.bg.toLowerCase()"
             fallback="ph:pencil-simple"
             :size="11"
             :class="isBrightColor(st.bg) ? 'text-black/80' : 'text-white/90'"
@@ -511,14 +545,18 @@ const {
             type="color"
             :value="st.bg"
             class="absolute inset-0 opacity-0 cursor-pointer"
-            :class="(selectionPrimaryColor === name || (selectionPrimaryColor || '').toLowerCase() === st.bg.toLowerCase()) ? 'h-full w-full pointer-events-auto z-10' : 'h-0 w-0 pointer-events-none'"
+            :class="((selectionPrimaryColor || 'amber') === name || (selectionPrimaryColor || '').toLowerCase() === st.bg.toLowerCase()) ? 'h-full w-full pointer-events-auto z-10' : 'h-0 w-0 pointer-events-none'"
             :ref="(el) => registerColorInput(`sel_sticky_${name}`, el)"
             @input="setSelectionStickyColor(($event.target as HTMLInputElement).value)"
             @change="setSelectionStickyColor(($event.target as HTMLInputElement).value)"
           />
         </button>
-        <label class="relative flex h-6 w-full cursor-pointer items-center justify-center rounded-md border border-line bg-surface hover:bg-hover transition-transform hover:scale-110 shadow-xs" title="Custom color">
-          <AppIcon fallback="ph:paint-brush" :size="12" class="text-ink-soft" />
+        <label
+          class="relative flex h-6 w-full cursor-pointer items-center justify-center rounded-md border transition-transform hover:scale-110 shadow-xs"
+          :class="isCustomColorActive(selectionPrimaryColor, Object.values(STICKY_COLORS).map(s => s.bg)) ? 'border-primary bg-primary/10 text-primary ring-2 ring-primary ring-offset-1 scale-105' : 'border-line bg-surface hover:bg-hover text-ink-soft'"
+          title="Custom color"
+        >
+          <AppIcon fallback="ph:paint-brush" :size="12" />
           <input type="color" :value="selectionPrimaryColor" class="absolute inset-0 opacity-0 cursor-pointer w-full h-full" @input="setSelectionStickyColor(($event.target as HTMLInputElement).value)" />
         </label>
       </div>
@@ -533,11 +571,11 @@ const {
           :key="idx"
           class="relative flex h-6 w-full items-center justify-center rounded-md transition-transform hover:scale-110 ring-1 ring-black/10"
           :style="{ backgroundColor: c }"
-          :class="(selectionPrimaryColor || '').toLowerCase() === c.toLowerCase() ? 'ring-2 ring-primary ring-offset-2 scale-105' : ''"
+          :class="isColorActive(selectionPrimaryColor, c) ? 'ring-2 ring-primary ring-offset-2 scale-105' : 'opacity-85 hover:opacity-100'"
           @click.stop="handleSwatchClick(c, idx, selectionPrimaryColor, setSelectionColor, 'sel_stroke')"
         >
           <AppIcon
-            v-if="(selectionPrimaryColor || '').toLowerCase() === c.toLowerCase()"
+            v-if="isColorActive(selectionPrimaryColor, c)"
             fallback="ph:pencil-simple"
             :size="11"
             :class="isBrightColor(c) ? 'text-black/80' : 'text-white/90'"
@@ -546,14 +584,18 @@ const {
             type="color"
             :value="c"
             class="absolute inset-0 opacity-0 cursor-pointer"
-            :class="(selectionPrimaryColor || '').toLowerCase() === c.toLowerCase() ? 'h-full w-full pointer-events-auto z-10' : 'h-0 w-0 pointer-events-none'"
+            :class="isColorActive(selectionPrimaryColor, c) ? 'h-full w-full pointer-events-auto z-10' : 'h-0 w-0 pointer-events-none'"
             :ref="(el) => registerColorInput(`sel_stroke_${idx}`, el)"
             @input="handleSwatchInput($event, idx, setSelectionColor)"
             @change="handleSwatchInput($event, idx, setSelectionColor)"
           />
         </button>
-        <label class="relative flex h-6 w-full cursor-pointer items-center justify-center rounded-md border border-line bg-surface hover:bg-hover transition-transform hover:scale-110 shadow-xs" title="Custom color">
-          <AppIcon fallback="ph:paint-brush" :size="12" class="text-ink-soft" />
+        <label
+          class="relative flex h-6 w-full cursor-pointer items-center justify-center rounded-md border transition-transform hover:scale-110 shadow-xs"
+          :class="isCustomColorActive(selectionPrimaryColor, activePalette) ? 'border-primary bg-primary/10 text-primary ring-2 ring-primary ring-offset-1 scale-105' : 'border-line bg-surface hover:bg-hover text-ink-soft'"
+          title="Custom color"
+        >
+          <AppIcon fallback="ph:paint-brush" :size="12" />
           <input type="color" :value="selectionPrimaryColor" class="absolute inset-0 opacity-0 cursor-pointer w-full h-full" @input="setSelectionColor(($event.target as HTMLInputElement).value)" />
         </label>
       </div>
@@ -561,10 +603,10 @@ const {
       <span class="text-[10px] font-bold uppercase tracking-wider text-ink-faint mt-1">Weight</span>
       <div class="flex gap-1">
         <button
-          v-for="w in [2, 4, 8, 16]"
+          v-for="w in (hasSelectedLines ? [2, 3, 5, 8] : [1, 2, 3, 6])"
           :key="w"
           class="flex h-7 flex-1 items-center justify-center rounded-lg border transition-all"
-          :class="selectionStrokeWidth === w ? 'border-primary bg-primary/10 text-primary' : 'border-line hover:bg-hover text-ink-soft'"
+          :class="isClosestOrEqual(selectionStrokeWidth, w, hasSelectedLines ? [2, 3, 5, 8] : [1, 2, 3, 6]) ? 'border-primary bg-primary/10 text-primary' : 'border-line hover:bg-hover text-ink-soft'"
           :title="`${w}px`"
           @click="setSelectionStrokeWidth(w)"
         >
@@ -574,7 +616,7 @@ const {
 
       <span class="text-[10px] font-bold uppercase tracking-wider text-ink-faint mt-1">Style</span>
       <div class="flex gap-1">
-        <button class="flex h-7 flex-1 items-center justify-center rounded-lg border transition-all" :class="selectionStrokeStyle === 'solid' ? 'border-primary bg-primary/10 text-primary' : 'border-line hover:bg-hover text-ink-soft'" title="Solid" @click="setSelectionStrokeStyle('solid')">
+        <button class="flex h-7 flex-1 items-center justify-center rounded-lg border transition-all" :class="(selectionStrokeStyle || 'solid') === 'solid' ? 'border-primary bg-primary/10 text-primary' : 'border-line hover:bg-hover text-ink-soft'" title="Solid" @click="setSelectionStrokeStyle('solid')">
           <div class="h-0.5 w-6 bg-current rounded" />
         </button>
         <button class="flex h-7 flex-1 items-center justify-center rounded-lg border transition-all" :class="selectionStrokeStyle === 'dashed' ? 'border-primary bg-primary/10 text-primary' : 'border-line hover:bg-hover text-ink-soft'" title="Dashed" @click="setSelectionStrokeStyle('dashed')">
@@ -589,7 +631,7 @@ const {
       <template v-if="hasSelectedLines">
         <span class="text-[10px] font-bold uppercase tracking-wider text-ink-faint mt-1">Curvature</span>
         <div class="flex gap-1">
-          <button class="flex h-7 flex-1 items-center justify-center rounded-lg border transition-all" :class="selectionCurvature === 'straight' ? 'border-primary bg-primary/10 text-primary' : 'border-line hover:bg-hover text-ink-soft'" title="Straight line" @click="setSelectionCurvature('straight')">
+          <button class="flex h-7 flex-1 items-center justify-center rounded-lg border transition-all" :class="(selectionCurvature || 'straight') === 'straight' ? 'border-primary bg-primary/10 text-primary' : 'border-line hover:bg-hover text-ink-soft'" title="Straight line" @click="setSelectionCurvature('straight')">
             <svg class="h-4 w-4" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round">
               <line x1="2.5" y1="13.5" x2="13.5" y2="2.5" />
             </svg>
@@ -618,7 +660,7 @@ const {
                 <button
                   class="flex h-7 flex-1 items-center justify-center rounded-lg border transition-all"
                   :class="[
-                    selectionStartOrientation === 'horizontal' ? 'border-primary bg-primary/10 text-primary' : 'border-line hover:bg-hover text-ink-soft',
+                    (selectionStartOrientation || 'horizontal') === 'horizontal' ? 'border-primary bg-primary/10 text-primary' : 'border-line hover:bg-hover text-ink-soft',
                     selectionStartAnchored ? 'opacity-50 cursor-not-allowed' : ''
                   ]"
                   :disabled="selectionStartAnchored"
@@ -656,7 +698,7 @@ const {
                 <button
                   class="flex h-7 flex-1 items-center justify-center rounded-lg border transition-all"
                   :class="[
-                    selectionEndOrientation === 'horizontal' ? 'border-primary bg-primary/10 text-primary' : 'border-line hover:bg-hover text-ink-soft',
+                    (selectionEndOrientation || 'horizontal') === 'horizontal' ? 'border-primary bg-primary/10 text-primary' : 'border-line hover:bg-hover text-ink-soft',
                     selectionEndAnchored ? 'opacity-50 cursor-not-allowed' : ''
                   ]"
                   :disabled="selectionEndAnchored"
@@ -692,7 +734,7 @@ const {
           <div>
             <span class="text-[10px] font-bold uppercase tracking-wider text-ink-faint">Start Point</span>
             <div class="flex gap-1 mt-1">
-              <button class="flex h-7 flex-1 items-center justify-center rounded-lg border transition-all" :class="selectionStartTermination === 'none' ? 'border-primary bg-primary/10 text-primary font-medium' : 'border-line hover:bg-hover text-ink-soft'" title="None" @click="setSelectionStartTermination('none')">
+              <button class="flex h-7 flex-1 items-center justify-center rounded-lg border transition-all" :class="(selectionStartTermination || 'none') === 'none' ? 'border-primary bg-primary/10 text-primary font-medium' : 'border-line hover:bg-hover text-ink-soft'" title="None" @click="setSelectionStartTermination('none')">
                 <div class="h-0.5 w-3 bg-current" />
               </button>
               <button class="flex h-7 flex-1 items-center justify-center rounded-lg border transition-all" :class="selectionStartTermination === 'arrow' ? 'border-primary bg-primary/10 text-primary font-medium' : 'border-line hover:bg-hover text-ink-soft'" title="Arrow" @click="setSelectionStartTermination('arrow')">
@@ -710,7 +752,7 @@ const {
               <button class="flex h-7 flex-1 items-center justify-center rounded-lg border transition-all" :class="selectionEndTermination === 'none' ? 'border-primary bg-primary/10 text-primary font-medium' : 'border-line hover:bg-hover text-ink-soft'" title="None" @click="setSelectionEndTermination('none')">
                 <div class="h-0.5 w-3 bg-current" />
               </button>
-              <button class="flex h-7 flex-1 items-center justify-center rounded-lg border transition-all" :class="selectionEndTermination === 'arrow' ? 'border-primary bg-primary/10 text-primary font-medium' : 'border-line hover:bg-hover text-ink-soft'" title="Arrow" @click="setSelectionEndTermination('arrow')">
+              <button class="flex h-7 flex-1 items-center justify-center rounded-lg border transition-all" :class="(selectionEndTermination || 'arrow') === 'arrow' ? 'border-primary bg-primary/10 text-primary font-medium' : 'border-line hover:bg-hover text-ink-soft'" title="Arrow" @click="setSelectionEndTermination('arrow')">
                 <AppIcon fallback="ph:arrow-right" :size="13" />
               </button>
               <button class="flex h-7 flex-1 items-center justify-center rounded-lg border transition-all" :class="selectionEndTermination === 'dot' ? 'border-primary bg-primary/10 text-primary font-medium' : 'border-line hover:bg-hover text-ink-soft'" title="Dot" @click="setSelectionEndTermination('dot')">
@@ -730,7 +772,7 @@ const {
           v-for="sz in (['sm', 'md', 'lg', 'xl'] as StickyFontSize[])"
           :key="sz"
           class="flex h-7 flex-1 items-center justify-center rounded-lg border text-xs font-semibold uppercase transition-all"
-          :class="currentStickyFontSize === sz ? 'border-primary bg-primary/10 text-primary' : 'border-line hover:bg-hover text-ink-soft'"
+          :class="(currentStickyFontSize || 'md') === sz ? 'border-primary bg-primary/10 text-primary' : 'border-line hover:bg-hover text-ink-soft'"
           @click="setSelectionStickyFontSize(sz)"
         >
           {{ sz }}
@@ -744,11 +786,11 @@ const {
           :key="idx"
           class="relative flex h-6 w-full items-center justify-center rounded-md transition-transform hover:scale-110 ring-1 ring-black/10"
           :style="{ backgroundColor: c }"
-          :class="(selectionStickyTextColor || '').toLowerCase() === c.toLowerCase() ? 'ring-2 ring-primary ring-offset-2 scale-105' : ''"
+          :class="isColorActive(selectionStickyTextColor, c) ? 'ring-2 ring-primary ring-offset-2 scale-105' : 'opacity-85 hover:opacity-100'"
           @click.stop="handleSwatchClick(c, idx, selectionStickyTextColor, setSelectionStickyTextColor, 'sel_sticky_text')"
         >
           <AppIcon
-            v-if="(selectionStickyTextColor || '').toLowerCase() === c.toLowerCase()"
+            v-if="isColorActive(selectionStickyTextColor, c)"
             fallback="ph:pencil-simple"
             :size="11"
             :class="isBrightColor(c) ? 'text-black/80' : 'text-white/90'"
@@ -757,14 +799,18 @@ const {
             type="color"
             :value="c"
             class="absolute inset-0 opacity-0 cursor-pointer"
-            :class="(selectionStickyTextColor || '').toLowerCase() === c.toLowerCase() ? 'h-full w-full pointer-events-auto z-10' : 'h-0 w-0 pointer-events-none'"
+            :class="isColorActive(selectionStickyTextColor, c) ? 'h-full w-full pointer-events-auto z-10' : 'h-0 w-0 pointer-events-none'"
             :ref="(el) => registerColorInput(`sel_sticky_text_${idx}`, el)"
             @input="handleSwatchInput($event, idx, setSelectionStickyTextColor)"
             @change="handleSwatchInput($event, idx, setSelectionStickyTextColor)"
           />
         </button>
-        <label class="relative flex h-6 w-full cursor-pointer items-center justify-center rounded-md border border-line bg-surface hover:bg-hover transition-transform hover:scale-110 shadow-xs" title="Custom text color">
-          <AppIcon fallback="ph:paint-brush" :size="12" class="text-ink-soft" />
+        <label
+          class="relative flex h-6 w-full cursor-pointer items-center justify-center rounded-md border transition-transform hover:scale-110 shadow-xs"
+          :class="isCustomColorActive(selectionStickyTextColor, activePalette) ? 'border-primary bg-primary/10 text-primary ring-2 ring-primary ring-offset-1 scale-105' : 'border-line bg-surface hover:bg-hover text-ink-soft'"
+          title="Custom text color"
+        >
+          <AppIcon fallback="ph:paint-brush" :size="12" />
           <input type="color" :value="selectionStickyTextColor" class="absolute inset-0 opacity-0 cursor-pointer w-full h-full" @input="setSelectionStickyTextColor(($event.target as HTMLInputElement).value)" />
         </label>
       </div>

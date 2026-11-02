@@ -67,6 +67,32 @@ const {
   zoomOut,
   resetView,
 } = inject(WHITEBOARD_CTX)!
+
+function isClosestOrEqual(val: number | undefined, target: number, list: number[]): boolean {
+  if (val === undefined || val === null) return target === list[0]
+  if (val === target) return true
+  if (list.includes(val)) return false
+  let closest = list[0]!
+  let minDiff = Math.abs(val - closest)
+  for (const item of list) {
+    const diff = Math.abs(val - item)
+    if (diff < minDiff) {
+      minDiff = diff
+      closest = item
+    }
+  }
+  return closest === target
+}
+
+function isColorActive(current: string | undefined, swatch: string): boolean {
+  if (!current) return false
+  return current.toLowerCase() === swatch.toLowerCase()
+}
+
+function isCustomColorActive(current: string | undefined, palette: string[]): boolean {
+  if (!current) return false
+  return !palette.some((c) => c.toLowerCase() === current.toLowerCase())
+}
 </script>
 
 <template>
@@ -92,7 +118,7 @@ const {
         <div class="grid grid-cols-2 gap-1">
           <button
             class="flex items-center justify-center gap-1.5 py-1.5 rounded-lg border text-xs transition-all"
-            :class="penPresets[activePresetIndex]?.type === 'pen' ? 'border-primary bg-primary/10 text-primary font-medium' : 'border-line hover:bg-hover text-ink-soft'"
+            :class="(penPresets[activePresetIndex]?.type || 'pen') === 'pen' ? 'border-primary bg-primary/10 text-primary font-medium' : 'border-line hover:bg-hover text-ink-soft'"
             @click="setPresetType('pen')"
           >
             <AppIcon fallback="ph:pen-nib" :size="14" />
@@ -112,10 +138,10 @@ const {
         <span class="text-[10px] font-bold uppercase tracking-wider text-ink-faint mt-1">Weight</span>
         <div class="flex gap-1">
           <button
-            v-for="w in (penPresets[activePresetIndex]?.type === 'highlighter' ? [12, 18, 24, 32] : [1, 2, 4, 8])"
+            v-for="w in (penPresets[activePresetIndex]?.type === 'highlighter' ? [12, 18, 24, 32] : [1, 2, 3, 6])"
             :key="w"
             class="flex h-7 flex-1 items-center justify-center rounded-lg border transition-all"
-            :class="currentWidth === w ? 'border-primary bg-primary/10 text-primary' : 'border-line hover:bg-hover text-ink-soft'"
+            :class="isClosestOrEqual(currentWidth, w, penPresets[activePresetIndex]?.type === 'highlighter' ? [12, 18, 24, 32] : [1, 2, 3, 6]) ? 'border-primary bg-primary/10 text-primary' : 'border-line hover:bg-hover text-ink-soft'"
             :title="`${w}px`"
             @click="setPresetWidth(w)"
           >
@@ -137,11 +163,11 @@ const {
             :key="idx"
             class="relative flex h-6 w-full items-center justify-center rounded-md transition-transform hover:scale-110 ring-1 ring-black/10"
             :style="{ backgroundColor: c }"
-            :class="(currentColor || '').toLowerCase() === c.toLowerCase() ? 'ring-2 ring-primary ring-offset-2 scale-105' : 'opacity-85 hover:opacity-100'"
+            :class="isColorActive(currentColor, c) ? 'ring-2 ring-primary ring-offset-2 scale-105' : 'opacity-85 hover:opacity-100'"
             @click="handleSwatchClick(c, idx, currentColor, setPresetColor, 'pen_preset')"
           >
             <AppIcon
-              v-if="(currentColor || '').toLowerCase() === c.toLowerCase()"
+              v-if="isColorActive(currentColor, c)"
               fallback="ph:pencil-simple"
               :size="11"
               :class="isBrightColor(c) ? 'text-black/80' : 'text-white/90'"
@@ -150,14 +176,18 @@ const {
               type="color"
               :value="c"
               class="absolute inset-0 opacity-0 cursor-pointer"
-              :class="(currentColor || '').toLowerCase() === c.toLowerCase() ? 'h-full w-full pointer-events-auto z-10' : 'h-0 w-0 pointer-events-none'"
+              :class="isColorActive(currentColor, c) ? 'h-full w-full pointer-events-auto z-10' : 'h-0 w-0 pointer-events-none'"
               :ref="(el) => registerColorInput(`pen_preset_${idx}`, el)"
               @input="handleSwatchInput($event, idx, setPresetColor)"
               @change="handleSwatchInput($event, idx, setPresetColor)"
             />
           </button>
-          <label class="relative flex h-6 w-full cursor-pointer items-center justify-center rounded-md border border-line bg-surface hover:bg-hover transition-transform hover:scale-110 shadow-xs" title="Custom color">
-            <AppIcon fallback="ph:paint-brush" :size="12" class="text-ink-soft" />
+          <label
+            class="relative flex h-6 w-full cursor-pointer items-center justify-center rounded-md border transition-transform hover:scale-110 shadow-xs"
+            :class="isCustomColorActive(currentColor, activePalette) ? 'border-primary bg-primary/10 text-primary ring-2 ring-primary ring-offset-1 scale-105' : 'border-line bg-surface hover:bg-hover text-ink-soft'"
+            title="Custom color"
+          >
+            <AppIcon fallback="ph:paint-brush" :size="12" />
             <input type="color" :value="currentColor" class="absolute inset-0 opacity-0 cursor-pointer w-full h-full" @input="setPresetColor(($event.target as HTMLInputElement).value)" />
           </label>
         </div>
@@ -174,7 +204,7 @@ const {
             v-for="sz in [8, 16, 32, 54]"
             :key="sz"
             class="flex h-9 flex-1 items-center justify-center rounded-lg border transition-all"
-            :class="eraserSize === sz ? 'border-primary bg-primary/10 text-primary' : 'border-line hover:bg-hover text-ink-soft'"
+            :class="isClosestOrEqual(eraserSize, sz, [8, 16, 32, 54]) ? 'border-primary bg-primary/10 text-primary' : 'border-line hover:bg-hover text-ink-soft'"
             :title="`${sz}px`"
             @click="eraserSize = sz"
           >
@@ -216,7 +246,7 @@ const {
               v-for="w in [2, 3, 5, 8]"
               :key="w"
               class="flex h-7 flex-1 items-center justify-center rounded-lg border transition-all"
-              :class="shape2DSettings[currentShape2D].strokeWidth === w ? 'border-primary bg-primary/10 text-primary' : 'border-line hover:bg-hover text-ink-soft'"
+              :class="isClosestOrEqual(shape2DSettings[currentShape2D].strokeWidth, w, [2, 3, 5, 8]) ? 'border-primary bg-primary/10 text-primary' : 'border-line hover:bg-hover text-ink-soft'"
               :title="`${w}px`"
               @click="setShapeStrokeWidth(w)"
             >
@@ -231,11 +261,11 @@ const {
               :key="idx"
               class="relative flex h-6 w-full items-center justify-center rounded-md transition-transform hover:scale-110 ring-1 ring-black/10"
               :style="{ backgroundColor: c }"
-              :class="(shape2DSettings[currentShape2D].color || '').toLowerCase() === c.toLowerCase() ? 'ring-2 ring-primary ring-offset-2 scale-105' : 'opacity-85 hover:opacity-100'"
+              :class="isColorActive(shape2DSettings[currentShape2D].color, c) ? 'ring-2 ring-primary ring-offset-2 scale-105' : 'opacity-85 hover:opacity-100'"
               @click="handleSwatchClick(c, idx, shape2DSettings[currentShape2D].color, setShapeColor, 'shape_outline')"
             >
               <AppIcon
-                v-if="(shape2DSettings[currentShape2D].color || '').toLowerCase() === c.toLowerCase()"
+                v-if="isColorActive(shape2DSettings[currentShape2D].color, c)"
                 fallback="ph:pencil-simple"
                 :size="11"
                 :class="isBrightColor(c) ? 'text-black/80' : 'text-white/90'"
@@ -244,14 +274,18 @@ const {
                 type="color"
                 :value="c"
                 class="absolute inset-0 opacity-0 cursor-pointer"
-                :class="(shape2DSettings[currentShape2D].color || '').toLowerCase() === c.toLowerCase() ? 'h-full w-full pointer-events-auto z-10' : 'h-0 w-0 pointer-events-none'"
+                :class="isColorActive(shape2DSettings[currentShape2D].color, c) ? 'h-full w-full pointer-events-auto z-10' : 'h-0 w-0 pointer-events-none'"
                 :ref="(el) => registerColorInput(`shape_outline_${idx}`, el)"
                 @input="handleSwatchInput($event, idx, setShapeColor)"
                 @change="handleSwatchInput($event, idx, setShapeColor)"
               />
             </button>
-            <label class="relative flex h-6 w-full cursor-pointer items-center justify-center rounded-md border border-line bg-surface hover:bg-hover transition-transform hover:scale-110 shadow-xs" title="Custom color">
-              <AppIcon fallback="ph:paint-brush" :size="12" class="text-ink-soft" />
+            <label
+              class="relative flex h-6 w-full cursor-pointer items-center justify-center rounded-md border transition-transform hover:scale-110 shadow-xs"
+              :class="isCustomColorActive(shape2DSettings[currentShape2D].color, activePalette) ? 'border-primary bg-primary/10 text-primary ring-2 ring-primary ring-offset-1 scale-105' : 'border-line bg-surface hover:bg-hover text-ink-soft'"
+              title="Custom color"
+            >
+              <AppIcon fallback="ph:paint-brush" :size="12" />
               <input type="color" :value="shape2DSettings[currentShape2D].color" class="absolute inset-0 opacity-0 cursor-pointer w-full h-full" @input="setShapeColor(($event.target as HTMLInputElement).value)" />
             </label>
           </div>
@@ -263,7 +297,7 @@ const {
           <div class="grid grid-cols-2 gap-1.5">
             <button
               class="flex items-center gap-1.5 px-2 py-1.5 rounded-lg border text-xs transition-all"
-              :class="shape2DSettings[currentShape2D].fill === 'none' ? 'border-primary bg-primary/10 text-primary font-medium' : 'border-line hover:bg-hover text-ink-soft'"
+              :class="(shape2DSettings[currentShape2D].fill || 'none') === 'none' ? 'border-primary bg-primary/10 text-primary font-medium' : 'border-line hover:bg-hover text-ink-soft'"
               @click="setShapeFill('none')"
             >
               <AppIcon fallback="ph:prohibit" :size="14" />
@@ -303,11 +337,11 @@ const {
                 :key="idx"
                 class="relative flex h-6 w-full items-center justify-center rounded-md transition-transform hover:scale-110 ring-1 ring-black/10"
                 :style="{ backgroundColor: c }"
-                :class="((shape2DSettings[currentShape2D].fillColor || shape2DSettings[currentShape2D].color) || '').toLowerCase() === c.toLowerCase() ? 'ring-2 ring-primary ring-offset-2 scale-105' : 'opacity-85 hover:opacity-100'"
+                :class="isColorActive(shape2DSettings[currentShape2D].fillColor || shape2DSettings[currentShape2D].color, c) ? 'ring-2 ring-primary ring-offset-2 scale-105' : 'opacity-85 hover:opacity-100'"
                 @click="handleSwatchClick(c, idx, shape2DSettings[currentShape2D].fillColor || shape2DSettings[currentShape2D].color, setShapeFillColor, 'shape_fill')"
               >
                 <AppIcon
-                  v-if="((shape2DSettings[currentShape2D].fillColor || shape2DSettings[currentShape2D].color) || '').toLowerCase() === c.toLowerCase()"
+                  v-if="isColorActive(shape2DSettings[currentShape2D].fillColor || shape2DSettings[currentShape2D].color, c)"
                   fallback="ph:pencil-simple"
                   :size="11"
                   :class="isBrightColor(c) ? 'text-black/80' : 'text-white/90'"
@@ -316,14 +350,18 @@ const {
                   type="color"
                   :value="c"
                   class="absolute inset-0 opacity-0 cursor-pointer"
-                  :class="((shape2DSettings[currentShape2D].fillColor || shape2DSettings[currentShape2D].color) || '').toLowerCase() === c.toLowerCase() ? 'h-full w-full pointer-events-auto z-10' : 'h-0 w-0 pointer-events-none'"
+                  :class="isColorActive(shape2DSettings[currentShape2D].fillColor || shape2DSettings[currentShape2D].color, c) ? 'h-full w-full pointer-events-auto z-10' : 'h-0 w-0 pointer-events-none'"
                   :ref="(el) => registerColorInput(`shape_fill_${idx}`, el)"
                   @input="handleSwatchInput($event, idx, setShapeFillColor)"
                   @change="handleSwatchInput($event, idx, setShapeFillColor)"
                 />
               </button>
-              <label class="relative flex h-6 w-full cursor-pointer items-center justify-center rounded-md border border-line bg-surface hover:bg-hover transition-transform hover:scale-110 shadow-xs" title="Custom color">
-                <AppIcon fallback="ph:paint-brush" :size="12" class="text-ink-soft" />
+              <label
+                class="relative flex h-6 w-full cursor-pointer items-center justify-center rounded-md border transition-transform hover:scale-110 shadow-xs"
+                :class="isCustomColorActive(shape2DSettings[currentShape2D].fillColor || shape2DSettings[currentShape2D].color, activePalette) ? 'border-primary bg-primary/10 text-primary ring-2 ring-primary ring-offset-1 scale-105' : 'border-line bg-surface hover:bg-hover text-ink-soft'"
+                title="Custom color"
+              >
+                <AppIcon fallback="ph:paint-brush" :size="12" />
                 <input type="color" :value="shape2DSettings[currentShape2D].fillColor || shape2DSettings[currentShape2D].color" class="absolute inset-0 opacity-0 cursor-pointer w-full h-full" @input="setShapeFillColor(($event.target as HTMLInputElement).value)" />
               </label>
             </div>
@@ -421,7 +459,7 @@ const {
           <div>
             <span class="text-[10px] font-bold uppercase tracking-wider text-ink-faint">Start Point</span>
             <div class="flex gap-1 mt-1">
-              <button class="flex h-7 flex-1 items-center justify-center rounded-lg border transition-all" :class="connectorSettings.startHead === 'none' ? 'border-primary bg-primary/10 text-primary font-medium' : 'border-line hover:bg-hover text-ink-soft'" title="None" @click="connectorSettings.startHead = 'none'; saveConnectorSettings()">
+              <button class="flex h-7 flex-1 items-center justify-center rounded-lg border transition-all" :class="(connectorSettings.startHead || 'none') === 'none' ? 'border-primary bg-primary/10 text-primary font-medium' : 'border-line hover:bg-hover text-ink-soft'" title="None" @click="connectorSettings.startHead = 'none'; saveConnectorSettings()">
                 <div class="h-0.5 w-3 bg-current" />
               </button>
               <button class="flex h-7 flex-1 items-center justify-center rounded-lg border transition-all" :class="connectorSettings.startHead === 'arrow' ? 'border-primary bg-primary/10 text-primary font-medium' : 'border-line hover:bg-hover text-ink-soft'" title="Arrow" @click="connectorSettings.startHead = 'arrow'; saveConnectorSettings()">
@@ -439,7 +477,7 @@ const {
               <button class="flex h-7 flex-1 items-center justify-center rounded-lg border transition-all" :class="connectorSettings.endHead === 'none' ? 'border-primary bg-primary/10 text-primary font-medium' : 'border-line hover:bg-hover text-ink-soft'" title="None" @click="connectorSettings.endHead = 'none'; saveConnectorSettings()">
                 <div class="h-0.5 w-3 bg-current" />
               </button>
-              <button class="flex h-7 flex-1 items-center justify-center rounded-lg border transition-all" :class="connectorSettings.endHead === 'arrow' ? 'border-primary bg-primary/10 text-primary font-medium' : 'border-line hover:bg-hover text-ink-soft'" title="Arrow" @click="connectorSettings.endHead = 'arrow'; saveConnectorSettings()">
+              <button class="flex h-7 flex-1 items-center justify-center rounded-lg border transition-all" :class="(connectorSettings.endHead || 'arrow') === 'arrow' ? 'border-primary bg-primary/10 text-primary font-medium' : 'border-line hover:bg-hover text-ink-soft'" title="Arrow" @click="connectorSettings.endHead = 'arrow'; saveConnectorSettings()">
                 <AppIcon fallback="ph:arrow-right" :size="13" />
               </button>
               <button class="flex h-7 flex-1 items-center justify-center rounded-lg border transition-all" :class="connectorSettings.endHead === 'dot' ? 'border-primary bg-primary/10 text-primary font-medium' : 'border-line hover:bg-hover text-ink-soft'" title="Dot" @click="connectorSettings.endHead = 'dot'; saveConnectorSettings()">
@@ -455,7 +493,7 @@ const {
             v-for="w in [2, 3, 5, 8]"
             :key="w"
             class="flex h-7 flex-1 items-center justify-center rounded-lg border transition-all"
-            :class="connectorSettings.strokeWidth === w ? 'border-primary bg-primary/10 text-primary' : 'border-line hover:bg-hover text-ink-soft'"
+            :class="isClosestOrEqual(connectorSettings.strokeWidth, w, [2, 3, 5, 8]) ? 'border-primary bg-primary/10 text-primary' : 'border-line hover:bg-hover text-ink-soft'"
             :title="`${w}px`"
             @click="connectorSettings.strokeWidth = w; saveConnectorSettings()"
           >
@@ -465,7 +503,7 @@ const {
 
         <span class="text-[10px] font-bold uppercase tracking-wider text-ink-faint mt-1">Style</span>
         <div class="flex gap-1">
-          <button class="flex h-7 flex-1 items-center justify-center rounded-lg border transition-all" :class="connectorSettings.strokeStyle === 'solid' ? 'border-primary bg-primary/10 text-primary' : 'border-line hover:bg-hover text-ink-soft'" title="Solid" @click="connectorSettings.strokeStyle = 'solid'; saveConnectorSettings()">
+          <button class="flex h-7 flex-1 items-center justify-center rounded-lg border transition-all" :class="(connectorSettings.strokeStyle || 'solid') === 'solid' ? 'border-primary bg-primary/10 text-primary' : 'border-line hover:bg-hover text-ink-soft'" title="Solid" @click="connectorSettings.strokeStyle = 'solid'; saveConnectorSettings()">
             <div class="h-0.5 w-6 bg-current rounded" />
           </button>
           <button class="flex h-7 flex-1 items-center justify-center rounded-lg border transition-all" :class="connectorSettings.strokeStyle === 'dashed' ? 'border-primary bg-primary/10 text-primary' : 'border-line hover:bg-hover text-ink-soft'" title="Dashed" @click="connectorSettings.strokeStyle = 'dashed'; saveConnectorSettings()">
@@ -483,11 +521,11 @@ const {
             :key="idx"
             class="relative flex h-6 w-full items-center justify-center rounded-md transition-transform hover:scale-110 ring-1 ring-black/10"
             :style="{ backgroundColor: c }"
-            :class="(connectorSettings.color || '').toLowerCase() === c.toLowerCase() ? 'ring-2 ring-primary ring-offset-2 scale-105' : 'opacity-85 hover:opacity-100'"
+            :class="isColorActive(connectorSettings.color, c) ? 'ring-2 ring-primary ring-offset-2 scale-105' : 'opacity-85 hover:opacity-100'"
             @click="handleSwatchClick(c, idx, connectorSettings.color, (val) => { connectorSettings.color = val; saveConnectorSettings() }, 'conn_color')"
           >
             <AppIcon
-              v-if="(connectorSettings.color || '').toLowerCase() === c.toLowerCase()"
+              v-if="isColorActive(connectorSettings.color, c)"
               fallback="ph:pencil-simple"
               :size="11"
               :class="isBrightColor(c) ? 'text-black/80' : 'text-white/90'"
@@ -496,14 +534,18 @@ const {
               type="color"
               :value="c"
               class="absolute inset-0 opacity-0 cursor-pointer"
-              :class="(connectorSettings.color || '').toLowerCase() === c.toLowerCase() ? 'h-full w-full pointer-events-auto z-10' : 'h-0 w-0 pointer-events-none'"
+              :class="isColorActive(connectorSettings.color, c) ? 'h-full w-full pointer-events-auto z-10' : 'h-0 w-0 pointer-events-none'"
               :ref="(el) => registerColorInput(`conn_color_${idx}`, el)"
               @input="handleSwatchInput($event, idx, (val) => { connectorSettings.color = val; saveConnectorSettings() })"
               @change="handleSwatchInput($event, idx, (val) => { connectorSettings.color = val; saveConnectorSettings() })"
             />
           </button>
-          <label class="relative flex h-6 w-full cursor-pointer items-center justify-center rounded-md border border-line bg-surface hover:bg-hover transition-transform hover:scale-110 shadow-xs" title="Custom color">
-            <AppIcon fallback="ph:paint-brush" :size="12" class="text-ink-soft" />
+          <label
+            class="relative flex h-6 w-full cursor-pointer items-center justify-center rounded-md border transition-transform hover:scale-110 shadow-xs"
+            :class="isCustomColorActive(connectorSettings.color, activePalette) ? 'border-primary bg-primary/10 text-primary ring-2 ring-primary ring-offset-1 scale-105' : 'border-line bg-surface hover:bg-hover text-ink-soft'"
+            title="Custom color"
+          >
+            <AppIcon fallback="ph:paint-brush" :size="12" />
             <input type="color" :value="connectorSettings.color" class="absolute inset-0 opacity-0 cursor-pointer w-full h-full" @input="connectorSettings.color = ($event.target as HTMLInputElement).value; saveConnectorSettings()" />
           </label>
         </div>
@@ -522,7 +564,7 @@ const {
             v-for="sz in (['sm', 'md', 'lg', 'xl'] as StickyFontSize[])"
             :key="sz"
             class="flex h-7 flex-1 items-center justify-center rounded-lg border text-xs font-semibold uppercase transition-all"
-            :class="currentStickyFontSize === sz ? 'border-primary bg-primary/10 text-primary' : 'border-line hover:bg-hover text-ink-soft'"
+            :class="(currentStickyFontSize || 'md') === sz ? 'border-primary bg-primary/10 text-primary' : 'border-line hover:bg-hover text-ink-soft'"
             @click="setSelectionStickyFontSize(sz)"
           >
             {{ sz }}
@@ -606,7 +648,7 @@ const {
         <div class="flex items-center gap-1">
           <button
             class="flex h-8 w-8 items-center justify-center rounded-lg transition-all"
-            :class="selectMode === 'box' ? 'bg-primary/15 ring-1 ring-primary/40 text-primary' : 'text-ink-soft hover:bg-hover'"
+            :class="(selectMode || 'box') === 'box' ? 'bg-primary/15 ring-1 ring-primary/40 text-primary' : 'text-ink-soft hover:bg-hover'"
             title="Box Selection"
             @click="selectMode = 'box'"
           >
@@ -614,7 +656,7 @@ const {
           </button>
           <button
             class="flex h-8 w-8 items-center justify-center rounded-lg transition-all"
-            :class="selectMode === 'lasso' ? 'bg-primary/15 ring-1 ring-primary/40 text-primary' : 'text-ink-soft hover:bg-hover'"
+            :class="(selectMode || 'box') === 'lasso' ? 'bg-primary/15 ring-1 ring-primary/40 text-primary' : 'text-ink-soft hover:bg-hover'"
             title="Lasso Selection"
             @click="selectMode = 'lasso'"
           >
@@ -628,7 +670,7 @@ const {
         <div v-for="(p, idx) in penPresets" :key="p.id" class="relative">
           <button
             class="flex h-8 w-8 items-center justify-center rounded-lg transition-all"
-            :class="activePresetIndex === idx ? 'bg-primary/15 ring-1 ring-primary/40 text-primary' : 'text-ink-soft hover:bg-hover'"
+            :class="(activePresetIndex ?? 0) === idx ? 'bg-primary/15 ring-1 ring-primary/40 text-primary' : 'text-ink-soft hover:bg-hover'"
             :title="p.name"
             @click="onPresetClick(idx)"
           >
@@ -638,7 +680,7 @@ const {
             </div>
           </button>
           <button
-            v-if="activePresetIndex === idx"
+            v-if="(activePresetIndex ?? 0) === idx"
             class="absolute -top-2 left-1/2 -translate-x-1/2 flex h-3.5 w-4 items-center justify-center rounded-t-sm bg-surface border-t border-x border-line text-ink-soft hover:text-ink shadow-xs"
             title="Preset settings"
             @click.stop="togglePopover('pen-preset')"
@@ -654,14 +696,14 @@ const {
           <div class="relative">
             <button
               class="flex h-8 w-8 items-center justify-center rounded-lg transition-all"
-              :class="eraserMode === 'pixel' ? 'bg-primary/15 ring-1 ring-primary/40 text-primary' : 'text-ink-soft hover:bg-hover'"
+              :class="(eraserMode || 'pixel') === 'pixel' ? 'bg-primary/15 ring-1 ring-primary/40 text-primary' : 'text-ink-soft hover:bg-hover'"
               title="Pixel Eraser"
               @click="eraserMode = 'pixel'"
             >
               <AppIcon fallback="ph:eraser" :size="16" />
             </button>
             <button
-              v-if="eraserMode === 'pixel'"
+              v-if="(eraserMode || 'pixel') === 'pixel'"
               class="absolute -top-2 left-1/2 -translate-x-1/2 flex h-3.5 w-4 items-center justify-center rounded-t-sm bg-surface border-t border-x border-line text-ink-soft hover:text-ink shadow-xs"
               title="Pixel eraser size"
               @click.stop="togglePopover('eraser')"
@@ -671,7 +713,7 @@ const {
           </div>
           <button
             class="flex h-8 w-8 items-center justify-center rounded-lg transition-all"
-            :class="eraserMode === 'object' ? 'bg-primary/15 ring-1 ring-primary/40 text-primary' : 'text-ink-soft hover:bg-hover'"
+            :class="(eraserMode || 'pixel') === 'object' ? 'bg-primary/15 ring-1 ring-primary/40 text-primary' : 'text-ink-soft hover:bg-hover'"
             title="Object Eraser"
             @click="eraserMode = 'object'; closeAllPopovers()"
           >
@@ -685,7 +727,7 @@ const {
         <div v-for="shp in (['rectangle', 'ellipse', 'diamond', 'triangle'] as Shape2DType[])" :key="shp" class="relative">
           <button
             class="flex h-8 w-8 items-center justify-center rounded-lg transition-all"
-            :class="activeShapeItem === shp ? 'bg-primary/15 ring-1 ring-primary/40 text-primary' : 'text-ink-soft hover:bg-hover'"
+            :class="(activeShapeItem || 'rectangle') === shp ? 'bg-primary/15 ring-1 ring-primary/40 text-primary' : 'text-ink-soft hover:bg-hover'"
             :title="shp"
             @click="onShapeClick(shp)"
           >
@@ -730,7 +772,7 @@ const {
             </svg>
           </button>
           <button
-            v-if="activeShapeItem === shp"
+            v-if="(activeShapeItem || 'rectangle') === shp"
             class="absolute -top-2 left-1/2 -translate-x-1/2 flex h-3.5 w-4 items-center justify-center rounded-t-sm bg-surface border-t border-x border-line text-ink-soft hover:text-ink shadow-xs"
             title="Shape settings"
             @click.stop="togglePopover('shape')"
@@ -745,7 +787,7 @@ const {
         <div v-for="curv in (['straight', 'curved', 'orthogonal'] as LineCurvature[])" :key="curv" class="relative">
           <button
             class="flex h-8 w-8 items-center justify-center rounded-lg transition-all"
-            :class="connectorSettings.curvature === curv ? 'bg-primary/15 ring-1 ring-primary/40 text-primary' : 'text-ink-soft hover:bg-hover'"
+            :class="(connectorSettings.curvature || 'straight') === curv ? 'bg-primary/15 ring-1 ring-primary/40 text-primary' : 'text-ink-soft hover:bg-hover'"
             :title="`${curv} connector`"
             @click="onConnectorCurvatureClick(curv)"
           >
@@ -767,7 +809,7 @@ const {
             </svg>
           </button>
           <button
-            v-if="connectorSettings.curvature === curv"
+            v-if="(connectorSettings.curvature || 'straight') === curv"
             class="absolute -top-2 left-1/2 -translate-x-1/2 flex h-3.5 w-4 items-center justify-center rounded-t-sm bg-surface border-t border-x border-line text-ink-soft hover:text-ink shadow-xs"
             title="Connector settings"
             @click.stop="togglePopover('connector')"
@@ -783,12 +825,12 @@ const {
           <button
             class="h-6 w-6 rounded-md ring-1 ring-black/10 transition-transform hover:scale-110"
             :style="{ backgroundColor: st.bg }"
-            :class="currentStickyColor === name ? 'ring-2 ring-primary ring-offset-1 scale-110' : ''"
+            :class="(currentStickyColor === name || (currentStickyColor || '').toLowerCase() === st.bg.toLowerCase()) ? 'ring-2 ring-primary ring-offset-1 scale-110' : ''"
             :title="`Sticky ${name}`"
             @click="onStickyColorClick(name)"
           />
           <button
-            v-if="currentStickyColor === name"
+            v-if="currentStickyColor === name || (currentStickyColor || '').toLowerCase() === st.bg.toLowerCase()"
             class="absolute -top-2 left-1/2 -translate-x-1/2 flex h-3.5 w-4 items-center justify-center rounded-t-sm bg-surface border-t border-x border-line text-ink-soft hover:text-ink shadow-xs"
             title="Sticky settings"
             @click.stop="togglePopover('sticky')"
@@ -939,7 +981,7 @@ const {
         <!-- Selection Dot Indicator below active tool -->
         <span
           v-if="currentTool === t.id"
-          class="absolute bottom-0.5 h-1.5 w-1.5 rounded-full bg-white shadow-xs pointer-events-none"
+          class="absolute bottom-0.5 h-1.5 w-1.5 rounded-full bg-primary shadow-xs pointer-events-none"
         />
       </button>
 
