@@ -636,6 +636,65 @@ export function pointInPolygon(p: Point, poly: Point[]): boolean {
   return inside
 }
 
+/** True if segment (p1->p2) intersects segment (q1->q2). */
+export function segmentsIntersect(p1: Point, p2: Point, q1: Point, q2: Point): boolean {
+  const dxP = p2.x - p1.x
+  const dyP = p2.y - p1.y
+  const dxQ = q2.x - q1.x
+  const dyQ = q2.y - q1.y
+  const denom = dxP * dyQ - dyP * dxQ
+  if (Math.abs(denom) < 1e-9) {
+    const minPx = Math.min(p1.x, p2.x)
+    const maxPx = Math.max(p1.x, p2.x)
+    const minPy = Math.min(p1.y, p2.y)
+    const maxPy = Math.max(p1.y, p2.y)
+    const minQx = Math.min(q1.x, q2.x)
+    const maxQx = Math.max(q1.x, q2.x)
+    const minQy = Math.min(q1.y, q2.y)
+    const maxQy = Math.max(q1.y, q2.y)
+    return maxPx >= minQx && maxQx >= minPx && maxPy >= minQy && maxQy >= minPy
+  }
+  const t = ((q1.x - p1.x) * dyQ - (q1.y - p1.y) * dxQ) / denom
+  const u = ((q1.x - p1.x) * dyP - (q1.y - p1.y) * dxP) / denom
+  return t >= 0 && t <= 1 && u >= 0 && u <= 1
+}
+
+/** True if polyline pts1 intersects polyline pts2 (optionally closed). */
+export function polylineIntersectsPolyline(
+  pts1: Point[],
+  pts2: Point[],
+  closed1 = false,
+  closed2 = false,
+): boolean {
+  const n1 = closed1 ? pts1.length : pts1.length - 1
+  const n2 = closed2 ? pts2.length : pts2.length - 1
+  for (let i = 0; i < n1; i++) {
+    const p1 = pts1[i]!
+    const p2 = pts1[(i + 1) % pts1.length]!
+    for (let j = 0; j < n2; j++) {
+      const q1 = pts2[j]!
+      const q2 = pts2[(j + 1) % pts2.length]!
+      if (segmentsIntersect(p1, p2, q1, q2)) return true
+    }
+  }
+  return false
+}
+
+/** True if polyline pts intersects polygon poly (any point inside or any segment intersecting). */
+export function polylineIntersectsPolygon(pts: Point[], poly: Point[]): boolean {
+  if (!pts.length || !poly.length) return false
+  if (pts.some((p) => pointInPolygon(p, poly))) return true
+  return polylineIntersectsPolyline(pts, poly, false, true)
+}
+
+/** True if two closed polygons intersect (either polygon has vertex in the other, or edges intersect). */
+export function polygonIntersectsPolygon(poly1: Point[], poly2: Point[]): boolean {
+  if (!poly1.length || !poly2.length) return false
+  if (poly1.some((p) => pointInPolygon(p, poly2))) return true
+  if (poly2.some((p) => pointInPolygon(p, poly1))) return true
+  return polylineIntersectsPolyline(poly1, poly2, true, true)
+}
+
 /**
  * Simplifies high-frequency (120Hz/240Hz Apple Pencil) freehand stroke points using
  * radial distance pre-filtering followed by Ramer–Douglas–Peucker decimation.

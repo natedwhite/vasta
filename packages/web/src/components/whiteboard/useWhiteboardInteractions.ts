@@ -4,11 +4,14 @@ import {
   anchorTargetId,
   distToPolyline,
   findNearestSnapAnchor,
+  getConnectorGeometry,
   isLine,
   orientationForSide,
-  pointInPolygon,
+  polygonIntersectsPolygon,
+  polylineIntersectsPolygon,
   rotatePoint,
   shapeHit,
+  shapePolygon,
   simplifyStrokePoints,
   type SnapCandidate,
 } from './shapes.ts'
@@ -23,6 +26,7 @@ import type {
 import { usePencilGestures } from './usePencilGestures.ts'
 import type { useToolSettings } from './useToolSettings.ts'
 import {
+  getStrokeCenter,
   intersects,
   keyOf,
   parseKey,
@@ -779,6 +783,76 @@ export function useWhiteboardInteractions(opts: {
     lastPt = pt
   }
 
+  function isItemCaughtBySelectArea(
+    key: string,
+    area: { type: 'box'; box: Box } | { type: 'lasso'; poly: Point[] },
+  ): boolean {
+    const found = findItem(key)
+    if (!found) return false
+
+    const itemBounds = boundsOfKey(key)
+    if (!itemBounds) return false
+
+    const areaBounds: Box =
+      area.type === 'box'
+        ? {
+            x: Math.min(area.box.x, area.box.x + area.box.w),
+            y: Math.min(area.box.y, area.box.y + area.box.h),
+            w: Math.abs(area.box.w),
+            h: Math.abs(area.box.h),
+          }
+        : pointsBox(area.poly)
+
+    if (!intersects(areaBounds, itemBounds)) return false
+
+    const selectPoly: Point[] =
+      area.type === 'box'
+        ? [
+            { x: areaBounds.x, y: areaBounds.y },
+            { x: areaBounds.x + areaBounds.w, y: areaBounds.y },
+            { x: areaBounds.x + areaBounds.w, y: areaBounds.y + areaBounds.h },
+            { x: areaBounds.x, y: areaBounds.y + areaBounds.h },
+          ]
+        : area.poly
+
+    if (found.kind === 'stroke') {
+      const s = found.item as InkStroke
+      if (!s.points.length) return false
+      let pts = s.points
+      if (s.rotation) {
+        const center = getStrokeCenter(s)
+        pts = s.points.map((p) => rotatePoint(p, center, s.rotation!))
+      }
+      return polylineIntersectsPolygon(pts, selectPoly)
+    }
+
+    if (found.kind === 'shape') {
+      const s = found.item as ShapeElement
+      if (isLine(s)) {
+        const geo = getConnectorGeometry(s)
+        const pts = geo.hitPoints.length
+          ? geo.hitPoints
+          : [{ x: s.x, y: s.y }, { x: s.x + s.width, y: s.y + s.height }]
+        return polylineIntersectsPolygon(pts, selectPoly)
+      }
+      const poly = shapePolygon(s)
+      return polygonIntersectsPolygon(poly, selectPoly)
+    }
+
+    // Sticky or Card
+    const it = found.item as ObjectCardElement | StickyElement
+    const corners: Point[] = [
+      { x: it.x, y: it.y },
+      { x: it.x + it.width, y: it.y },
+      { x: it.x + it.width, y: it.y + it.height },
+      { x: it.x, y: it.y + it.height },
+    ]
+    const poly = it.rotation
+      ? corners.map((p) => rotatePoint(p, { x: it.x + it.width / 2, y: it.y + it.height / 2 }, it.rotation!))
+      : corners
+    return polygonIntersectsPolygon(poly, selectPoly)
+  }
+
   function cancelInteraction() {
     setMode(null)
     currentStroke.value = null
@@ -839,10 +913,7 @@ export function useWhiteboardInteractions(opts: {
         const box = marquee.value
         marquee.value = null
         if (!box || (box.w < 4 && box.h < 4)) break
-        const hits = allKeys().filter((k) => {
-          const b = boundsOfKey(k)
-          return b && intersects(box, b)
-        })
+        const hits = allKeys().filter((k) => isItemCaughtBySelectArea(k, { type: 'box', box }))
         selected.value = shiftHeld ? [...new Set([...selected.value, ...hits])] : hits
         break
       }
@@ -850,16 +921,7 @@ export function useWhiteboardInteractions(opts: {
         const poly = lasso.value
         lasso.value = null
         if (!poly || poly.length < 3) break
-        const hits = allKeys().filter((k) => {
-          const found = findItem(k)
-          if (!found) return false
-          if (found.kind === 'stroke') {
-            const pts = (found.item as InkStroke).points
-            return pts.filter((p) => pointInPolygon(p, poly)).length >= Math.max(1, pts.length / 2)
-          }
-          const b = boundsOfKey(k)
-          return !!b && pointInPolygon({ x: b.x + b.w / 2, y: b.y + b.h / 2 }, poly)
-        })
+        const hits = allKeys().filter((k) => isItemCaughtBySelectArea(k, { type: 'lasso', poly }))
         selected.value = shiftHeld ? [...new Set([...selected.value, ...hits])] : hits
         break
       }

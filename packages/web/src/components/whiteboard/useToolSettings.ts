@@ -365,7 +365,7 @@ export function useToolSettings(
   }
 
   const activePopover = ref<PopoverName>(null)
-  const secondaryOpen = ref(false)
+  const secondaryOpen = ref(true)
   const objectPickerOpen = ref(false)
 
   function togglePopover(name: PopoverName) {
@@ -383,7 +383,6 @@ export function useToolSettings(
       if (!secondaryOpen.value) closeAllPopovers()
     } else {
       currentTool.value = tool
-      secondaryOpen.value = true
       closeAllPopovers()
       if (tool === 'pen') selectPenPreset(activePresetIndex.value)
     }
