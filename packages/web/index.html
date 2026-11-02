@@ -14,8 +14,46 @@
     <link rel="manifest" href="/manifest.webmanifest" />
   </head>
   <body>
-    <div id="ios-status-bar-sampler" aria-hidden="true"></div>
+    <div class="remove-blur" aria-hidden="true"></div>
     <div id="app"></div>
+    <script>
+      (function () {
+        function initBlurFix() {
+          var isStandalone = window.matchMedia('(display-mode: standalone)').matches ||
+            navigator.standalone === true;
+          var isIOS = /iPhone|iPad|iPod/.test(navigator.userAgent) ||
+            (navigator.userAgent.indexOf('Macintosh') !== -1 && navigator.maxTouchPoints > 1);
+          if (!isStandalone || !isIOS) return;
+
+          if (document.getElementById('ojapp-blur-panel')) return;
+
+          var cover = document.createElement('div');
+          cover.id = 'ojapp-blur-cover';
+          var panel = document.createElement('div');
+          panel.id = 'ojapp-blur-panel';
+          (document.body || document.documentElement).appendChild(cover);
+          (document.body || document.documentElement).appendChild(panel);
+
+          void panel.offsetWidth;
+
+          requestAnimationFrame(function () {
+            cover.style.display = 'block';
+            panel.style.transform = 'translateX(0%)';
+            setTimeout(function () {
+              cover.style.display = 'none';
+              panel.style.transform = 'translateX(110%)';
+              // Keep panel in DOM off-screen to preserve WebKit compositing state
+            }, 500);
+          });
+        }
+
+        if (document.readyState === 'loading') {
+          window.addEventListener('DOMContentLoaded', initBlurFix, { once: true });
+        } else {
+          initBlurFix();
+        }
+      })();
+    </script>
     <script type="module" src="/src/main.ts"></script>
   </body>
 </html>

@@ -65,15 +65,49 @@
   --safe-area-top: env(safe-area-inset-top, 0px);
 }
 
-#ios-status-bar-sampler {
+/* OJapp Tips CSS workaround for iOS 27 PWA top blur:
+   A painted 11px element with background-clip: text at the top edge
+   forces WebKit compositor to discard the status bar progressive blur overlay. */
+@media (display-mode: standalone) {
+  .remove-blur {
+    position: fixed;
+    inset: 0 0 auto;
+    height: 11px;
+    pointer-events: none;
+    background-color: var(--color-canvas);
+    -webkit-background-clip: text;
+    background-clip: text;
+    z-index: 99999;
+  }
+}
+
+#ojapp-blur-cover {
+  display: none;
+  position: fixed;
+  inset: 0;
+  z-index: 2147483646;
+  background: rgba(255, 255, 255, 0.01);
+  pointer-events: none;
+  animation: ojapp-cover-fade 0.3s;
+}
+
+#ojapp-blur-panel {
   position: fixed;
   top: 0;
-  left: 0;
   right: 0;
-  height: 1px;
-  background-color: var(--color-canvas);
-  z-index: 9999;
+  bottom: 0;
+  width: 90%;
+  height: 100%;
+  z-index: 2147483647;
+  background: rgba(255, 255, 255, 0.01);
   pointer-events: none;
+  transform: translateX(110%);
+  transition: transform 0.3s;
+}
+
+@keyframes ojapp-cover-fade {
+  from { opacity: 0; }
+  to { opacity: 1; }
 }
 
 html,
