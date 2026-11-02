@@ -12,6 +12,64 @@
     <link rel="icon" href="/icon.svg" type="image/svg+xml" />
     <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
     <link rel="manifest" href="/manifest.webmanifest" />
+    <script>
+      // iOS/iPadOS 18+ WebKit standalone PWA status bar blur workaround
+      // Forces WebKit compositor to discard its progressive status bar blur overlay
+      (function () {
+        var isIOS = /iPhone|iPad|iPod/.test(navigator.userAgent) ||
+          (navigator.userAgent.indexOf('Macintosh') !== -1 && navigator.maxTouchPoints > 1);
+        var isStandalone = window.matchMedia('(display-mode: standalone)').matches ||
+          navigator.standalone === true;
+        if (!isIOS || !isStandalone) return;
+
+        var style = document.createElement('style');
+        style.id = 'ios-pwa-blur-fix-style';
+        style.textContent = [
+          '#ios-blur-cover { display: none; position: fixed; inset: 0; z-index: 2147483646; background: rgba(255,255,255,0.01); pointer-events: none; animation: ios-cover-fade 0.3s; }',
+          '#ios-blur-panel { position: fixed; top: 0; right: 0; bottom: 0; width: 90%; height: 100%; z-index: 2147483647; background: rgba(255,255,255,0.01); pointer-events: none; transform: translateX(110%); transition: transform 0.3s; }',
+          '@keyframes ios-cover-fade { from { opacity: 0; } to { opacity: 1; } }'
+        ].join('\n');
+        document.head.appendChild(style);
+
+        function triggerFix() {
+          if (document.getElementById('ios-blur-panel')) return;
+          var cover = document.createElement('div');
+          cover.id = 'ios-blur-cover';
+          var panel = document.createElement('div');
+          panel.id = 'ios-blur-panel';
+          var target = document.body || document.documentElement;
+          target.appendChild(cover);
+          target.appendChild(panel);
+
+          void panel.offsetWidth;
+
+          requestAnimationFrame(function () {
+            cover.style.display = 'block';
+            panel.style.transform = 'translateX(0%)';
+            setTimeout(function () {
+              cover.style.display = 'none';
+              panel.style.transform = 'translateX(110%)';
+              setTimeout(function () {
+                cover.remove();
+                panel.remove();
+              }, 350);
+            }, 500);
+          });
+        }
+
+        if (document.readyState === 'loading') {
+          window.addEventListener('DOMContentLoaded', triggerFix, { once: true });
+        } else {
+          triggerFix();
+        }
+
+        document.addEventListener('visibilitychange', function () {
+          if (document.visibilityState === 'visible') {
+            triggerFix();
+          }
+        });
+      })();
+    </script>
   </head>
   <body>
     <div id="app"></div>
