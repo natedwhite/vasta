@@ -130,7 +130,7 @@ export function useToolSettings(
 
   const DEFAULT_PEN_PRESETS: PenPreset[] = [
     { id: 'p1', name: 'Pen', type: 'pen', color: defaultInkColor, width: 3, style: 'solid' },
-    { id: 'p2', name: 'Pencil', type: 'pencil', color: '#64748b', width: 2, style: 'solid' },
+    { id: 'p2', name: 'Fine Pen', type: 'pen', color: '#64748b', width: 2, style: 'solid' },
     { id: 'p3', name: 'Highlighter', type: 'highlighter', color: '#f59e0b', width: 18, style: 'marker' },
     { id: 'p4', name: 'Color Pen', type: 'pen', color: '#2563eb', width: 3, style: 'solid' },
   ]
@@ -140,7 +140,16 @@ export function useToolSettings(
       const raw = localStorage.getItem(PEN_PRESETS_KEY)
       if (raw) {
         const parsed = JSON.parse(raw)
-        if (Array.isArray(parsed) && parsed.length === 4 && parsed[0]?.type) return parsed
+        if (Array.isArray(parsed) && parsed.length === 4 && parsed[0]?.type) {
+          // Normalize any legacy 'pencil' presets to 'pen'
+          for (const item of parsed) {
+            if ((item.type as string) === 'pencil') {
+              item.type = 'pen'
+              if (item.name === 'Pencil') item.name = 'Fine Pen'
+            }
+          }
+          return parsed
+        }
       }
     } catch {}
     return DEFAULT_PEN_PRESETS
@@ -332,7 +341,7 @@ export function useToolSettings(
       currentWidth.value = p.width
       p.style = type === 'highlighter' ? 'marker' : 'solid'
       currentStrokeStyle.value = p.style
-      p.name = type === 'pen' ? 'Pen' : type === 'pencil' ? 'Pencil' : 'Highlighter'
+      p.name = type === 'pen' ? 'Pen' : 'Highlighter'
       savePenPresets()
     }
   }
@@ -444,7 +453,6 @@ export function useToolSettings(
   })
 
   const dockPenIcon = computed(() => {
-    if (currentPenType.value === 'pencil') return 'ph:pencil-simple'
     if (currentPenType.value === 'highlighter') return 'ph:highlighter'
     return 'ph:pen-nib'
   })
