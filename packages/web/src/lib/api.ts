@@ -202,6 +202,19 @@ export const authApi = {
   revokeSession: (id: string) => request<void>('DELETE', `/api/auth/sessions/${id}`),
   /** Log out every session but this one. */
   revokeOtherSessions: () => request<void>('DELETE', '/api/auth/sessions'),
+  oidcStatus: () => request<OidcStatus>('GET', '/api/auth/oidc/status'),
+  oidcUnlink: () => request<{ ok: boolean }>('POST', '/api/auth/oidc/unlink'),
+}
+
+export interface OidcStatus {
+  enabled: boolean
+  displayName: string
+  issuer?: string
+  callbackUrl?: string
+  autoSignup?: boolean
+  loginUrl: string
+  linked: boolean
+  identity?: { sub: string; email?: string } | null
 }
 
 /** Moving the notes of the desktop app's own server to another server (server/src/transfer.ts). */

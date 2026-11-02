@@ -6,6 +6,12 @@ GitHub release page.
 
 ## Unreleased
 
+### Added
+
+- **OpenID Connect (OIDC / SSO) authentication.** Log in with an external identity provider like
+  PocketID, Authentik, or Keycloak. Includes Settings › Single Sign-On to view provider status,
+  callback URLs, and manage account linking.
+
 ### Changed
 
 - **The toggle's arrow** is bigger and sits centered on the title's line; the lines inside line up

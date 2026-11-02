@@ -12,10 +12,15 @@ const username = ref('')
 const password = ref('')
 const error = ref('')
 const busy = ref(false)
+const oidc = ref<{ enabled: boolean; displayName: string; loginUrl: string } | null>(null)
 
 const inviteCode = new URLSearchParams(location.search).get('invite') ?? ''
 const invite = ref<{ invitedBy: string; spaceName?: string } | null>(null)
 onMounted(async () => {
+  const loginErr = new URLSearchParams(location.search).get('loginError')
+  if (loginErr) error.value = loginErr
+
+  authApi.oidcStatus().then((s) => (oidc.value = s.enabled ? s : null)).catch(() => {})
   if (!inviteCode || session.noUsers) return
   try {
     invite.value = await authApi.invite(inviteCode)
@@ -56,6 +61,20 @@ const field = 'mt-1 w-full rounded-lg border border-line bg-surface px-3 py-2 te
         <AppIcon fallback="ph:planet" class="text-ink-soft" :size="20" />
         <h1 class="text-lg font-semibold">{{ mode === 'login' ? 'Vasta' : 'Welcome to Vasta' }}</h1>
       </div>
+      <template v-if="mode === 'login' && oidc">
+        <a
+          :href="oidc.loginUrl"
+          class="flex w-full items-center justify-center gap-2 rounded-lg border border-line bg-surface py-2 px-3 text-sm font-medium text-ink hover:bg-hover transition-colors shadow-sm"
+        >
+          <AppIcon fallback="ph:shield-check" class="text-ink-soft" :size="18" />
+          Continue with {{ oidc.displayName }}
+        </a>
+        <div class="my-4 flex items-center gap-3">
+          <div class="h-px flex-1 bg-line" />
+          <span class="text-xs text-ink-faint uppercase font-medium">or</span>
+          <div class="h-px flex-1 bg-line" />
+        </div>
+      </template>
       <template v-if="mode === 'setup'">
         <p class="mb-4 text-sm text-ink-soft">
           Create the first account. It owns this server's spaces and can invite others later. The setup code is in the server's log

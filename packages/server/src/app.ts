@@ -61,6 +61,7 @@ import { openApi } from './openapi.ts'
 import { MAX_PULL_LIMIT, MAX_PUSH_CHANGES, MAX_TEXT_OBJECTS, pull, push, textUpdates, type SyncChange } from './sync.ts'
 import { ImportError, MAX_IMPORT_BYTES, Migration, importRows, type ImportBatch, type MigrationInput } from './transfer.ts'
 import { WeblinkError, WeblinkService } from './weblinks.ts'
+import { createOidcRouter } from './oidc.ts'
 
 const CONTENT_TYPES: Record<string, string> = {
   png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', gif: 'image/gif', webp: 'image/webp', svg: 'image/svg+xml',
@@ -1492,6 +1493,25 @@ export function createApp({ store, media, now = () => new Date().toISOString(), 
     }
   )
   app.route('/api/auth', authApi)
+  if (process.env.OIDC_ISSUER) {
+    app.route(
+      '/api/auth/oidc',
+      createOidcRouter({
+        issuer: process.env.OIDC_ISSUER,
+        clientId: process.env.OIDC_CLIENT_ID || 'vasta',
+        clientSecret: process.env.OIDC_CLIENT_SECRET,
+        displayName: process.env.OIDC_DISPLAY_NAME,
+        autoSignup: process.env.OIDC_AUTO_SIGNUP !== 'false',
+        webUrl,
+        accounts: users,
+        store,
+        setSessionCookie,
+        appAuth,
+        identify,
+        now,
+      })
+    )
+  }
   app.route('/api/capture', captureApi)
   app.use('/api/*', appAuth)
   app.use('/media/*', appAuth)
