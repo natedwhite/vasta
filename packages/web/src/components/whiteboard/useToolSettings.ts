@@ -21,7 +21,7 @@ export interface Shape2DSettings {
   strokeStyle: StrokeStyle
 }
 
-export type ShapeItemType = Shape2DType | 'connector'
+export type ShapeItemType = Shape2DType
 
 export interface ConnectorSettings {
   color: string
@@ -64,7 +64,8 @@ export const mainTools: { id: WhiteboardTool; icon: string; title: string }[] = 
   { id: 'select', icon: 'ph:bounding-box', title: 'Selection' },
   { id: 'pen', icon: 'ph:pencil-simple', title: 'Pen & Drawing' },
   { id: 'eraser', icon: 'ph:eraser', title: 'Eraser' },
-  { id: 'shape2d', icon: 'ph:shapes', title: 'Shapes & Lines' },
+  { id: 'shape2d', icon: 'ph:shapes', title: 'Shapes' },
+  { id: 'connector', icon: 'ph:flow-arrow', title: 'Connectors & Lines' },
   { id: 'sticky', icon: 'ph:note', title: 'Sticky Note' },
 ]
 
@@ -277,7 +278,7 @@ export function useToolSettings(
     saveShapeSettings()
   }
 
-  const activeShapeItem = ref<ShapeItemType>('rectangle')
+  const activeShapeItem = ref<Shape2DType>('rectangle')
 
   function getShapeFillPreview(type: Shape2DType): string {
     const s = shape2DSettings.value[type]
@@ -388,12 +389,22 @@ export function useToolSettings(
     }
   }
 
-  function onShapeClick(shp: ShapeItemType) {
-    if (activeShapeItem.value === shp) {
-      togglePopover(shp === 'connector' ? 'connector' : 'shape')
+  function onShapeClick(shp: Shape2DType) {
+    if (activeShapeItem.value === shp && currentShape2D.value === shp) {
+      togglePopover('shape')
     } else {
       activeShapeItem.value = shp
-      if (shp !== 'connector') currentShape2D.value = shp
+      currentShape2D.value = shp
+      closeAllPopovers()
+    }
+  }
+
+  function onConnectorCurvatureClick(curv: LineCurvature) {
+    if (connectorSettings.value.curvature === curv) {
+      togglePopover('connector')
+    } else {
+      connectorSettings.value.curvature = curv
+      saveConnectorSettings()
       closeAllPopovers()
     }
   }
@@ -408,7 +419,7 @@ export function useToolSettings(
   }
 
   const hasSecondary = computed(() =>
-    ['select', 'pen', 'eraser', 'shape2d', 'sticky'].includes(currentTool.value),
+    ['select', 'pen', 'eraser', 'shape2d', 'connector', 'sticky'].includes(currentTool.value),
   )
 
   const eraserCursor = ref<{ x: number; y: number } | null>(null)
@@ -497,6 +508,7 @@ export function useToolSettings(
     onSelectMainTool,
     onPresetClick,
     onShapeClick,
+    onConnectorCurvatureClick,
     onStickyColorClick,
     hasSecondary,
     eraserCursor,

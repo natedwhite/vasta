@@ -4,7 +4,7 @@ import AppIcon from '../AppIcon.vue'
 import ObjectPicker from '../ObjectPicker.vue'
 import { WHITEBOARD_CTX } from './context.ts'
 import { STICKY_COLORS, stickyStyle } from './shapes.ts'
-import type { Shape2DType, StickyFontSize } from './types.ts'
+import type { LineCurvature, Shape2DType, StickyFontSize } from './types.ts'
 
 const {
   isSceneDrawing,
@@ -48,6 +48,7 @@ const {
   eraserMode,
   activeShapeItem,
   onShapeClick,
+  onConnectorCurvatureClick,
   getShapeFillPreview,
   getConnectorIconPaths,
   canUndo,
@@ -687,7 +688,7 @@ const {
         </div>
       </template>
 
-      <!-- 3. Shapes & Connectors Mode: 4 Shapes + 1D Connector -->
+      <!-- 3. 2D Shapes Mode: 4 Shapes -->
       <template v-else-if="currentTool === 'shape2d'">
         <div v-for="shp in (['rectangle', 'ellipse', 'diamond', 'triangle'] as Shape2DType[])" :key="shp" class="relative">
           <button
@@ -745,17 +746,19 @@ const {
             <AppIcon fallback="ph:caret-up" :size="8" />
           </button>
         </div>
+      </template>
 
-        <!-- 1D Connector Item -->
-        <div class="relative">
+      <!-- 4. 1D Connectors Mode: Curvature Presets + Settings -->
+      <template v-else-if="currentTool === 'connector'">
+        <div v-for="curv in (['straight', 'curved', 'orthogonal'] as LineCurvature[])" :key="curv" class="relative">
           <button
             class="flex h-8 w-8 items-center justify-center rounded-lg transition-all"
-            :class="activeShapeItem === 'connector' ? 'bg-primary/15 ring-1 ring-primary/40 text-primary' : 'text-ink-soft hover:bg-hover'"
-            title="Connector"
-            @click="onShapeClick('connector')"
+            :class="connectorSettings.curvature === curv ? 'bg-primary/15 ring-1 ring-primary/40 text-primary' : 'text-ink-soft hover:bg-hover'"
+            :title="`${curv} connector`"
+            @click="onConnectorCurvatureClick(curv)"
           >
             <svg class="h-[18px] w-[18px] shrink-0" viewBox="0 0 24 24">
-              <template v-for="paths in [getConnectorIconPaths(connectorSettings.curvature, connectorSettings.startHead, connectorSettings.endHead)]" :key="connectorSettings.curvature + connectorSettings.startHead + connectorSettings.endHead">
+              <template v-for="paths in [getConnectorIconPaths(curv, connectorSettings.startHead, connectorSettings.endHead)]" :key="curv + connectorSettings.startHead + connectorSettings.endHead">
                 <path
                   :d="paths.shaft"
                   fill="none"
@@ -772,7 +775,7 @@ const {
             </svg>
           </button>
           <button
-            v-if="activeShapeItem === 'connector'"
+            v-if="connectorSettings.curvature === curv"
             class="absolute -top-2 left-1/2 -translate-x-1/2 flex h-3.5 w-4 items-center justify-center rounded-t-sm bg-surface border-t border-x border-line text-ink-soft hover:text-ink shadow-xs"
             title="Connector settings"
             @click.stop="togglePopover('connector')"
@@ -853,27 +856,11 @@ const {
           <AppIcon :fallback="dockEraserIcon" :size="17" />
         </template>
 
-        <!-- Dynamic Shape Preview (Shape or Connector + Settings) -->
+        <!-- Dynamic 2D Shape Preview -->
         <template v-else-if="t.id === 'shape2d'">
-          <svg class="h-[18px] w-[18px] shrink-0" viewBox="0 0 24 24">
-            <template v-if="activeShapeItem === 'connector'">
-              <template v-for="paths in [getConnectorIconPaths(connectorSettings.curvature, connectorSettings.startHead, connectorSettings.endHead)]" :key="connectorSettings.curvature + connectorSettings.startHead + connectorSettings.endHead">
-                <path
-                  :d="paths.shaft"
-                  fill="none"
-                  :stroke="connectorSettings.color"
-                  stroke-width="2"
-                  stroke-linecap="round"
-                  stroke-linejoin="round"
-                />
-                <circle v-if="connectorSettings.startHead === 'dot'" :cx="paths.startDot.cx" :cy="paths.startDot.cy" r="2.2" :fill="connectorSettings.color" />
-                <polygon v-else-if="connectorSettings.startHead === 'arrow'" :points="paths.startTriangle" :fill="connectorSettings.color" />
-                <circle v-if="connectorSettings.endHead === 'dot'" :cx="paths.endDot.cx" :cy="paths.endDot.cy" r="2.2" :fill="connectorSettings.color" />
-                <polygon v-else-if="connectorSettings.endHead === 'arrow'" :points="paths.endTriangle" :fill="connectorSettings.color" />
-              </template>
-            </template>
+          <svg class="h-[18px] w-[18px] shrink-0" viewBox="0 0 20 20">
             <rect
-              v-else-if="activeShapeItem === 'rectangle'"
+              v-if="activeShapeItem === 'rectangle'"
               x="2.5"
               y="3.5"
               width="15"
@@ -909,6 +896,26 @@ const {
               stroke-linejoin="round"
               :fill="getShapeFillPreview(activeShapeItem)"
             />
+          </svg>
+        </template>
+
+        <!-- Dynamic 1D Connector Preview -->
+        <template v-else-if="t.id === 'connector'">
+          <svg class="h-[18px] w-[18px] shrink-0" viewBox="0 0 24 24">
+            <template v-for="paths in [getConnectorIconPaths(connectorSettings.curvature, connectorSettings.startHead, connectorSettings.endHead)]" :key="connectorSettings.curvature + connectorSettings.startHead + connectorSettings.endHead">
+              <path
+                :d="paths.shaft"
+                fill="none"
+                :stroke="connectorSettings.color"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+              />
+              <circle v-if="connectorSettings.startHead === 'dot'" :cx="paths.startDot.cx" :cy="paths.startDot.cy" r="2.2" :fill="connectorSettings.color" />
+              <polygon v-else-if="connectorSettings.startHead === 'arrow'" :points="paths.startTriangle" :fill="connectorSettings.color" />
+              <circle v-if="connectorSettings.endHead === 'dot'" :cx="paths.endDot.cx" :cy="paths.endDot.cy" r="2.2" :fill="connectorSettings.color" />
+              <polygon v-else-if="connectorSettings.endHead === 'arrow'" :points="paths.endTriangle" :fill="connectorSettings.color" />
+            </template>
           </svg>
         </template>
 

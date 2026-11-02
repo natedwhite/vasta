@@ -61,6 +61,8 @@ const {
   setSelectionStartOrientation,
   selectionEndOrientation,
   setSelectionEndOrientation,
+  selectionStartAnchored,
+  selectionEndAnchored,
   selectionStartTermination,
   setSelectionStartTermination,
   selectionEndTermination,
@@ -608,12 +610,19 @@ const {
         <template v-if="selectionCurvature === 'orthogonal'">
           <div class="mt-1 grid grid-cols-2 gap-2 rounded-lg border border-line/60 bg-hover/30 p-2">
             <div>
-              <span class="text-[10px] font-bold uppercase tracking-wider text-ink-faint">Start Route</span>
+              <div class="flex items-center justify-between">
+                <span class="text-[10px] font-bold uppercase tracking-wider text-ink-faint">Start Route</span>
+                <span v-if="selectionStartAnchored" class="text-[9px] font-semibold text-primary" title="Locked to snapped object edge">Snapped</span>
+              </div>
               <div class="flex gap-1 mt-1">
                 <button
                   class="flex h-7 flex-1 items-center justify-center rounded-lg border transition-all"
-                  :class="selectionStartOrientation === 'horizontal' ? 'border-primary bg-primary/10 text-primary' : 'border-line hover:bg-hover text-ink-soft'"
-                  title="Horizontal Start (routes horizontally)"
+                  :class="[
+                    selectionStartOrientation === 'horizontal' ? 'border-primary bg-primary/10 text-primary' : 'border-line hover:bg-hover text-ink-soft',
+                    selectionStartAnchored ? 'opacity-50 cursor-not-allowed' : ''
+                  ]"
+                  :disabled="selectionStartAnchored"
+                  :title="selectionStartAnchored ? 'Locked to snapped object edge' : 'Horizontal Start (routes horizontally)'"
                   @click="setSelectionStartOrientation('horizontal')"
                 >
                   <svg class="h-4 w-4" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -623,8 +632,12 @@ const {
                 </button>
                 <button
                   class="flex h-7 flex-1 items-center justify-center rounded-lg border transition-all"
-                  :class="selectionStartOrientation === 'vertical' ? 'border-primary bg-primary/10 text-primary' : 'border-line hover:bg-hover text-ink-soft'"
-                  title="Vertical Start (routes vertically)"
+                  :class="[
+                    selectionStartOrientation === 'vertical' ? 'border-primary bg-primary/10 text-primary' : 'border-line hover:bg-hover text-ink-soft',
+                    selectionStartAnchored ? 'opacity-50 cursor-not-allowed' : ''
+                  ]"
+                  :disabled="selectionStartAnchored"
+                  :title="selectionStartAnchored ? 'Locked to snapped object edge' : 'Vertical Start (routes vertically)'"
                   @click="setSelectionStartOrientation('vertical')"
                 >
                   <svg class="h-4 w-4" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -635,12 +648,19 @@ const {
               </div>
             </div>
             <div>
-              <span class="text-[10px] font-bold uppercase tracking-wider text-ink-faint">End Route</span>
+              <div class="flex items-center justify-between">
+                <span class="text-[10px] font-bold uppercase tracking-wider text-ink-faint">End Route</span>
+                <span v-if="selectionEndAnchored" class="text-[9px] font-semibold text-primary" title="Locked to snapped object edge">Snapped</span>
+              </div>
               <div class="flex gap-1 mt-1">
                 <button
                   class="flex h-7 flex-1 items-center justify-center rounded-lg border transition-all"
-                  :class="selectionEndOrientation === 'horizontal' ? 'border-primary bg-primary/10 text-primary' : 'border-line hover:bg-hover text-ink-soft'"
-                  title="Horizontal End (enters horizontally)"
+                  :class="[
+                    selectionEndOrientation === 'horizontal' ? 'border-primary bg-primary/10 text-primary' : 'border-line hover:bg-hover text-ink-soft',
+                    selectionEndAnchored ? 'opacity-50 cursor-not-allowed' : ''
+                  ]"
+                  :disabled="selectionEndAnchored"
+                  :title="selectionEndAnchored ? 'Locked to snapped object edge' : 'Horizontal End (enters horizontally)'"
                   @click="setSelectionEndOrientation('horizontal')"
                 >
                   <svg class="h-4 w-4" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -650,8 +670,12 @@ const {
                 </button>
                 <button
                   class="flex h-7 flex-1 items-center justify-center rounded-lg border transition-all"
-                  :class="selectionEndOrientation === 'vertical' ? 'border-primary bg-primary/10 text-primary' : 'border-line hover:bg-hover text-ink-soft'"
-                  title="Vertical End (enters vertically)"
+                  :class="[
+                    selectionEndOrientation === 'vertical' ? 'border-primary bg-primary/10 text-primary' : 'border-line hover:bg-hover text-ink-soft',
+                    selectionEndAnchored ? 'opacity-50 cursor-not-allowed' : ''
+                  ]"
+                  :disabled="selectionEndAnchored"
+                  :title="selectionEndAnchored ? 'Locked to snapped object edge' : 'Vertical End (enters vertically)'"
                   @click="setSelectionEndOrientation('vertical')"
                 >
                   <svg class="h-4 w-4" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">

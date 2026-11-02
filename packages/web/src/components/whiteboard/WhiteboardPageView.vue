@@ -286,9 +286,11 @@ async function flushSave() {
         const cardMap = new Map(pendingData.cards.map((c) => [c.id, c.objectId]))
         const connections: { fromId: string; toId: string }[] = []
         for (const shape of pendingData.shapes) {
-          if ((shape.type === 'arrow' || shape.type === 'line') && shape.startAnchor?.cardId && shape.endAnchor?.cardId) {
-            const fromObjId = cardMap.get(shape.startAnchor.cardId)
-            const toObjId = cardMap.get(shape.endAnchor.cardId)
+          const startCardId = shape.startAnchor?.cardId || (shape.startAnchor?.targetKind === 'card' ? shape.startAnchor.targetId : undefined)
+          const endCardId = shape.endAnchor?.cardId || (shape.endAnchor?.targetKind === 'card' ? shape.endAnchor.targetId : undefined)
+          if ((shape.type === 'arrow' || shape.type === 'line') && startCardId && endCardId) {
+            const fromObjId = cardMap.get(startCardId)
+            const toObjId = cardMap.get(endCardId)
             if (fromObjId && toObjId && fromObjId !== toObjId) {
               connections.push({ fromId: fromObjId, toId: toObjId })
             }

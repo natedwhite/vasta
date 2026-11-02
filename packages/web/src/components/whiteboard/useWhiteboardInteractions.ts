@@ -1,12 +1,16 @@
 import { nextTick, onMounted, onUnmounted, ref, type Ref } from 'vue'
 import { newId } from './ids.ts'
 import {
+  anchorTargetId,
   distToPolyline,
+  findNearestSnapAnchor,
   isLine,
+  orientationForSide,
   pointInPolygon,
   rotatePoint,
   shapeHit,
   simplifyStrokePoints,
+  type SnapCandidate,
 } from './shapes.ts'
 import type {
   DrawMode,
@@ -84,7 +88,6 @@ export function useWhiteboardInteractions(opts: {
     currentStickyTextColor,
     currentStickyFontSize,
     shape2DSettings,
-    activeShapeItem,
     connectorSettings,
     closeAllPopovers,
     onSelectMainTool,
@@ -97,6 +100,9 @@ export function useWhiteboardInteractions(opts: {
   const {
     selected,
     findItem,
+    getSnapTargets,
+    syncAnchoredConnectors,
+    detachAnchorsTo,
     boundsOfKey,
     allKeys,
     getMaxZIndex,
@@ -179,7 +185,13 @@ export function useWhiteboardInteractions(opts: {
     const tol = 12 / zoom.value
     const before = strokes.value.length + shapes.value.length
     strokes.value = strokes.value.filter((s) => distToPolyline(pt, s.points) > tol + s.width / 2)
-    shapes.value = shapes.value.filter((s) => !shapeHit(s, pt, tol))
+    const erasedShapeIds = new Set<string>()
+    shapes.value = shapes.value.filter((s) => {
+      const hit = shapeHit(s, pt, tol)
+      if (hit && !isLine(s)) erasedShapeIds.add(s.id)
+      return !hit
+    })
+    if (erasedShapeIds.size > 0) detachAnchorsTo(erasedShapeIds)
     if (strokes.value.length + shapes.value.length !== before) erased = true
   }
 
@@ -201,6 +213,7 @@ export function useWhiteboardInteractions(opts: {
   const currentShape = ref<ShapeElement | null>(null)
   const marquee = ref<Box | null>(null)
   const lasso = ref<Point[] | null>(null)
+  const hoveredSnapAnchor = ref<SnapCandidate | null>(null)
 
   const activeMode = ref<InteractionMode | null>(null)
   let mode: InteractionMode | null = null
@@ -212,7 +225,10 @@ export function useWhiteboardInteractions(opts: {
   let lastPt: Point = { x: 0, y: 0 }
   let shiftHeld = false
   let moved = false
-  let moveOrigins = new Map<string, { x: number; y: number; points?: Point[] }>()
+  let moveOrigins = new Map<
+    string,
+    { x: number; y: number; width?: number; height?: number; controlPoint?: Point; points?: Point[] }
+  >()
   let tapSticky: string | undefined
   let resizeHandle: Handle['id'] | null = null
   let resizeKey = ''
@@ -225,6 +241,10 @@ export function useWhiteboardInteractions(opts: {
   let rotateStartAngle = 0
   let rotateInitialMap = new Map<string, number>()
 
+  function getSnapRadius(): number {
+    return 24 / zoom.value
+  }
+
   function beginMove(pt: Point) {
     setMode('move')
     moved = false
@@ -235,7 +255,14 @@ export function useWhiteboardInteractions(opts: {
       if (found.kind === 'stroke') {
         moveOrigins.set(key, { x: 0, y: 0, points: (found.item as InkStroke).points.map((p) => ({ ...p })) })
       } else {
-        moveOrigins.set(key, { x: (found.item as ShapeElement).x, y: (found.item as ShapeElement).y })
+        const item = found.item as ShapeElement
+        moveOrigins.set(key, {
+          x: item.x,
+          y: item.y,
+          width: item.width,
+          height: item.height,
+          ...(item.controlPoint ? { controlPoint: { ...item.controlPoint } } : {}),
+        })
       }
     }
     startPt = pt
@@ -251,12 +278,39 @@ export function useWhiteboardInteractions(opts: {
       if (!found) continue
       if (found.kind === 'stroke') {
         ;(found.item as InkStroke).points = (origin.points ?? []).map((p) => ({ ...p, x: p.x + dx, y: p.y + dy }))
+      } else if (found.kind === 'shape' && isLine(found.item as ShapeElement)) {
+        const line = found.item as ShapeElement
+        const hasStart = !!anchorTargetId(line.startAnchor)
+        const hasEnd = !!anchorTargetId(line.endAnchor)
+        if (hasStart && hasEnd) {
+          // Both ends anchored: endpoints are driven by syncAnchoredConnectors()
+          continue
+        }
+        if (!hasStart && !hasEnd) {
+          line.x = origin.x + dx
+          line.y = origin.y + dy
+          if (origin.controlPoint) {
+            line.controlPoint = { x: origin.controlPoint.x + dx, y: origin.controlPoint.y + dy }
+          }
+        } else if (hasStart && !hasEnd) {
+          // Only start is anchored: move the free end if its target isn't in the selection
+          const startTargetKey = `${line.startAnchor?.targetKind || 'card'}:${anchorTargetId(line.startAnchor)}`
+          if (!moveOrigins.has(startTargetKey)) continue
+          line.width = (origin.width ?? line.width) + dx
+          line.height = (origin.height ?? line.height) + dy
+        } else if (!hasStart && hasEnd) {
+          const endTargetKey = `${line.endAnchor?.targetKind || 'card'}:${anchorTargetId(line.endAnchor)}`
+          if (!moveOrigins.has(endTargetKey)) continue
+          line.x = origin.x + dx
+          line.y = origin.y + dy
+        }
       } else {
         const item = found.item as ShapeElement
         item.x = origin.x + dx
         item.y = origin.y + dy
       }
     }
+    syncAnchoredConnectors()
   }
 
   function startResizeForHandle(handle: Handle) {
@@ -307,13 +361,43 @@ export function useWhiteboardInteractions(opts: {
       if (resizeHandle === 'start') {
         const ex = s.x + s.width
         const ey = s.y + s.height
-        s.x = pt.x
-        s.y = pt.y
-        s.width = ex - pt.x
-        s.height = ey - pt.y
+        const otherEndId = anchorTargetId(s.endAnchor)
+        const snap = findNearestSnapAnchor(pt, getSnapTargets(), getSnapRadius(), { x: ex, y: ey }, otherEndId)
+        hoveredSnapAnchor.value = snap
+        const targetPt = snap ? snap.point : pt
+        s.x = targetPt.x
+        s.y = targetPt.y
+        s.width = ex - targetPt.x
+        s.height = ey - targetPt.y
+        if (snap) {
+          s.startAnchor = {
+            targetId: snap.targetId,
+            targetKind: snap.targetKind,
+            ...(snap.targetKind === 'card' ? { cardId: snap.targetId } : {}),
+            side: snap.side,
+          }
+          s.startOrientation = orientationForSide(snap.side)
+        } else {
+          delete s.startAnchor
+        }
       } else if (resizeHandle === 'end') {
-        s.width = pt.x - s.x
-        s.height = pt.y - s.y
+        const startId = anchorTargetId(s.startAnchor)
+        const snap = findNearestSnapAnchor(pt, getSnapTargets(), getSnapRadius(), { x: s.x, y: s.y }, startId)
+        hoveredSnapAnchor.value = snap
+        const targetPt = snap ? snap.point : pt
+        s.width = targetPt.x - s.x
+        s.height = targetPt.y - s.y
+        if (snap) {
+          s.endAnchor = {
+            targetId: snap.targetId,
+            targetKind: snap.targetKind,
+            ...(snap.targetKind === 'card' ? { cardId: snap.targetId } : {}),
+            side: snap.side,
+          }
+          s.endOrientation = orientationForSide(snap.side)
+        } else {
+          delete s.endAnchor
+        }
       } else if (resizeHandle === 'mid') {
         if (s.curvature === 'curved') {
           const p0x = s.x
@@ -325,9 +409,14 @@ export function useWhiteboardInteractions(opts: {
             y: 2 * pt.y - 0.5 * p0y - 0.5 * p2y,
           }
         } else if (s.curvature === 'orthogonal') {
+          const lockedStartOri = orientationForSide(s.startAnchor?.side)
+          const lockedEndOri = orientationForSide(s.endAnchor?.side)
           const defStartOri = s.orientation ?? (Math.abs(s.width) >= Math.abs(s.height) ? 'horizontal' : 'vertical')
-          const startOri = s.startOrientation ?? defStartOri
-          const endOri = s.endOrientation ?? (s.startOrientation ? (startOri === 'horizontal' ? 'horizontal' : 'vertical') : defStartOri)
+          const startOri = lockedStartOri ?? s.startOrientation ?? defStartOri
+          const endOri =
+            lockedEndOri ??
+            s.endOrientation ??
+            (s.startOrientation || lockedStartOri ? (startOri === 'horizontal' ? 'horizontal' : 'vertical') : defStartOri)
           if (startOri === 'vertical' && endOri === 'vertical') {
             s.midOffset = pt.y - s.y
           } else if (startOri === 'horizontal' && endOri === 'horizontal') {
@@ -394,6 +483,7 @@ export function useWhiteboardInteractions(opts: {
       if ('width' in item) item.width = newW
       if ('height' in item) item.height = newH
     }
+    syncAnchoredConnectors()
   }
 
   let lastTapKey: string | undefined
@@ -479,6 +569,7 @@ export function useWhiteboardInteractions(opts: {
     startPt = pt
     lastPt = pt
     moved = false
+    hoveredSnapAnchor.value = null
     const tool = currentTool.value
     const selecting = tool === 'select'
 
@@ -534,44 +625,58 @@ export function useWhiteboardInteractions(opts: {
     } else if (tool === 'eraser') {
       setMode('erase')
       eraseAt(pt)
-    } else if (tool === 'shape2d' || tool === 'connector') {
+    } else if (tool === 'connector') {
       setMode('shape')
       selected.value = []
-      if (activeShapeItem.value === 'connector' || tool === 'connector') {
-        const s = connectorSettings.value
-        currentShape.value = {
-          id: newId(),
-          type: 'arrow',
-          x: pt.x,
-          y: pt.y,
-          width: 0,
-          height: 0,
-          color: s.color,
-          strokeWidth: s.strokeWidth,
-          strokeStyle: s.strokeStyle,
-          curvature: s.curvature,
-          startHead: s.startHead,
-          endHead: s.endHead,
-          startOrientation: s.startOrientation,
-          endOrientation: s.endOrientation,
-          zIndex: getMaxZIndex() + 1,
-        }
-      } else {
-        const s = shape2DSettings.value[currentShape2D.value]
-        currentShape.value = {
-          id: newId(),
-          type: currentShape2D.value,
-          x: pt.x,
-          y: pt.y,
-          width: 0,
-          height: 0,
-          color: s.color,
-          fill: s.fill,
-          fillColor: s.fillColor,
-          strokeWidth: s.strokeWidth,
-          strokeStyle: s.strokeStyle,
-          zIndex: getMaxZIndex() + 1,
-        }
+      const s = connectorSettings.value
+      const startSnap = findNearestSnapAnchor(pt, getSnapTargets(), getSnapRadius())
+      hoveredSnapAnchor.value = startSnap
+      const originPt = startSnap ? startSnap.point : pt
+      startPt = originPt
+      currentShape.value = {
+        id: newId(),
+        type: 'arrow',
+        x: originPt.x,
+        y: originPt.y,
+        width: 0,
+        height: 0,
+        color: s.color,
+        strokeWidth: s.strokeWidth,
+        strokeStyle: s.strokeStyle,
+        curvature: s.curvature,
+        startHead: s.startHead,
+        endHead: s.endHead,
+        startOrientation: startSnap ? orientationForSide(startSnap.side) : s.startOrientation,
+        endOrientation: s.endOrientation,
+        ...(startSnap
+          ? {
+              startAnchor: {
+                targetId: startSnap.targetId,
+                targetKind: startSnap.targetKind,
+                ...(startSnap.targetKind === 'card' ? { cardId: startSnap.targetId } : {}),
+                side: startSnap.side,
+              },
+            }
+          : {}),
+        zIndex: getMaxZIndex() + 1,
+      }
+    } else if (tool === 'shape2d') {
+      setMode('shape')
+      selected.value = []
+      const s = shape2DSettings.value[currentShape2D.value]
+      currentShape.value = {
+        id: newId(),
+        type: currentShape2D.value,
+        x: pt.x,
+        y: pt.y,
+        width: 0,
+        height: 0,
+        color: s.color,
+        fill: s.fill,
+        fillColor: s.fillColor,
+        strokeWidth: s.strokeWidth,
+        strokeStyle: s.strokeStyle,
+        zIndex: getMaxZIndex() + 1,
       }
     } else if (tool === 'sticky') {
       addStickyAt(pt)
@@ -587,8 +692,48 @@ export function useWhiteboardInteractions(opts: {
         const s = currentShape.value
         if (!s) break
         if (isLine(s)) {
-          s.width = pt.x - startPt.x
-          s.height = pt.y - startPt.y
+          const startTargetId = anchorTargetId(s.startAnchor)
+          // Update startAnchor side dynamically if the user started inside an object and drags toward another direction
+          if (startTargetId) {
+            const startTarget = getSnapTargets().find((t) => t.id === startTargetId)
+            if (startTarget && Math.hypot(pt.x - startPt.x, pt.y - startPt.y) > 20 / zoom.value) {
+              const startSnap = findNearestSnapAnchor(startPt, [startTarget], getSnapRadius() * 2, pt)
+              if (startSnap) {
+                s.startAnchor = {
+                  targetId: startSnap.targetId,
+                  targetKind: startSnap.targetKind,
+                  ...(startSnap.targetKind === 'card' ? { cardId: startSnap.targetId } : {}),
+                  side: startSnap.side,
+                }
+                s.startOrientation = orientationForSide(startSnap.side)
+                s.x = startSnap.point.x
+                s.y = startSnap.point.y
+              }
+            }
+          }
+          const endSnap = findNearestSnapAnchor(
+            pt,
+            getSnapTargets(),
+            getSnapRadius(),
+            { x: s.x, y: s.y },
+            startTargetId,
+          )
+          hoveredSnapAnchor.value = endSnap
+          const endPt = endSnap ? endSnap.point : pt
+          s.width = endPt.x - s.x
+          s.height = endPt.y - s.y
+          if (endSnap) {
+            s.endAnchor = {
+              targetId: endSnap.targetId,
+              targetKind: endSnap.targetKind,
+              ...(endSnap.targetKind === 'card' ? { cardId: endSnap.targetId } : {}),
+              side: endSnap.side,
+            }
+            s.endOrientation = orientationForSide(endSnap.side)
+          } else {
+            delete s.endAnchor
+            s.endOrientation = connectorSettings.value.endOrientation
+          }
         } else {
           s.x = Math.min(startPt.x, pt.x)
           s.y = Math.min(startPt.y, pt.y)
@@ -616,6 +761,7 @@ export function useWhiteboardInteractions(opts: {
             ;(found.item as { rotation?: number }).rotation = Math.round((((initRot + deltaDeg) % 360) + 360) % 360)
           }
         }
+        syncAnchoredConnectors()
         break
       }
       case 'marquee':
@@ -639,11 +785,13 @@ export function useWhiteboardInteractions(opts: {
     currentShape.value = null
     marquee.value = null
     lasso.value = null
+    hoveredSnapAnchor.value = null
   }
 
   function endInteraction() {
     const finished = mode
     setMode(null)
+    hoveredSnapAnchor.value = null
     switch (finished) {
       case 'stroke': {
         const stroke = currentStroke.value
@@ -963,6 +1111,11 @@ export function useWhiteboardInteractions(opts: {
 
     if (mouseActive) {
       moveInteraction(getCanvasCoords(e.clientX, e.clientY))
+    } else if (currentTool.value === 'connector') {
+      const pt = getCanvasCoords(e.clientX, e.clientY)
+      hoveredSnapAnchor.value = findNearestSnapAnchor(pt, getSnapTargets(), getSnapRadius())
+    } else if (hoveredSnapAnchor.value) {
+      hoveredSnapAnchor.value = null
     }
   }
 
@@ -1141,6 +1294,8 @@ export function useWhiteboardInteractions(opts: {
       onSelectMainTool('hand')
     } else if (!mod && e.key.toLowerCase() === 'v') {
       onSelectMainTool('select')
+    } else if (!mod && e.key.toLowerCase() === 'c') {
+      onSelectMainTool('connector')
     }
   }
 
@@ -1198,6 +1353,7 @@ export function useWhiteboardInteractions(opts: {
     currentShape,
     marquee,
     lasso,
+    hoveredSnapAnchor,
     activeMode,
     touchPanning,
     mousePanning,

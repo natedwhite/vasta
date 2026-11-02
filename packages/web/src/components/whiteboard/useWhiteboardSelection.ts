@@ -1,10 +1,21 @@
-import { computed, ref, type ComputedRef, type Ref } from 'vue'
+import { computed, nextTick, ref, type ComputedRef, type Ref } from 'vue'
 import type { ObjectSummary, PropertyDef } from '@vasta/core'
 import { displayTitle } from '../../lib/format.ts'
 import { cachedSummary, typesById } from '../../lib/state.ts'
 import { newId } from './ids.ts'
-import { distToPolyline, isLine, rotatePoint, shapeHit, stickyStyle } from './shapes.ts'
+import {
+  anchorTargetId,
+  distToPolyline,
+  getAnchorPoint,
+  isLine,
+  orientationForSide,
+  rotatePoint,
+  shapeHit,
+  stickyStyle,
+  type SnapTarget,
+} from './shapes.ts'
 import type {
+  AnchorTargetKind,
   CardContentMode,
   InkStroke,
   LineCurvature,
@@ -146,6 +157,138 @@ export function useWhiteboardSelection(opts: UseWhiteboardSelectionOptions) {
             : stickies.value
     const item = (list as { id: string }[]).find((i) => i.id === id)
     return item ? { kind, item: item as InkStroke | ShapeElement | ObjectCardElement | StickyElement } : undefined
+  }
+
+  /**
+   * Returns all connectible canvas objects (Cards, Stickies, and 2D Shapes) sorted by zIndex.
+   */
+  function getSnapTargets(excludeIds?: Set<string>): SnapTarget[] {
+    const targets: (SnapTarget & { z: number })[] = []
+    for (const c of cards.value) {
+      if (excludeIds?.has(c.id)) continue
+      targets.push({ id: c.id, kind: 'card', x: c.x, y: c.y, width: c.width, height: c.height, rotation: c.rotation, z: c.zIndex ?? 1 })
+    }
+    for (const st of stickies.value) {
+      if (excludeIds?.has(st.id)) continue
+      targets.push({ id: st.id, kind: 'sticky', x: st.x, y: st.y, width: st.width, height: st.height, rotation: st.rotation, z: st.zIndex ?? 1 })
+    }
+    for (const sh of shapes.value) {
+      if (isLine(sh) || excludeIds?.has(sh.id)) continue
+      targets.push({ id: sh.id, kind: 'shape', x: sh.x, y: sh.y, width: sh.width, height: sh.height, rotation: sh.rotation, z: sh.zIndex ?? 1 })
+    }
+    targets.sort((a, b) => a.z - b.z)
+    return targets
+  }
+
+  function findSnapTarget(id: string, kind?: AnchorTargetKind): SnapTarget | undefined {
+    if (!kind || kind === 'card') {
+      const c = cards.value.find((x) => x.id === id)
+      if (c) return { id: c.id, kind: 'card', x: c.x, y: c.y, width: c.width, height: c.height, rotation: c.rotation }
+    }
+    if (!kind || kind === 'sticky') {
+      const st = stickies.value.find((x) => x.id === id)
+      if (st) return { id: st.id, kind: 'sticky', x: st.x, y: st.y, width: st.width, height: st.height, rotation: st.rotation }
+    }
+    if (!kind || kind === 'shape') {
+      const sh = shapes.value.find((x) => x.id === id && !isLine(x))
+      if (sh) return { id: sh.id, kind: 'shape', x: sh.x, y: sh.y, width: sh.width, height: sh.height, rotation: sh.rotation }
+    }
+    return undefined
+  }
+
+  /**
+   * Synchronizes all connectors that have `startAnchor` or `endAnchor` so their endpoints
+   * stay locked to the target object's side and `controlPoint` / `midOffset` scale cleanly.
+   */
+  function syncAnchoredConnectors() {
+    for (const s of shapes.value) {
+      if (!isLine(s)) continue
+      const startId = anchorTargetId(s.startAnchor)
+      const endId = anchorTargetId(s.endAnchor)
+      if (!startId && !endId) continue
+
+      const oldStart = { x: s.x, y: s.y }
+      const oldEnd = { x: s.x + s.width, y: s.y + s.height }
+      const oldMid = { x: (oldStart.x + oldEnd.x) / 2, y: (oldStart.y + oldEnd.y) / 2 }
+      const oldDx = s.width
+      const oldDy = s.height
+
+      let nextStart = { ...oldStart }
+      let nextEnd = { ...oldEnd }
+
+      if (startId && s.startAnchor?.side) {
+        const t = findSnapTarget(startId, s.startAnchor.targetKind)
+        if (t) {
+          nextStart = getAnchorPoint(t, s.startAnchor.side)
+          s.startOrientation = orientationForSide(s.startAnchor.side)
+        }
+      }
+      if (endId && s.endAnchor?.side) {
+        const t = findSnapTarget(endId, s.endAnchor.targetKind)
+        if (t) {
+          nextEnd = getAnchorPoint(t, s.endAnchor.side)
+          s.endOrientation = orientationForSide(s.endAnchor.side)
+        }
+      }
+
+      const newDx = nextEnd.x - nextStart.x
+      const newDy = nextEnd.y - nextStart.y
+
+      // Keep curved controlPoint relative to the line's midpoint so moving cards never warps the curve
+      if (s.curvature === 'curved' && s.controlPoint) {
+        const newMid = { x: (nextStart.x + nextEnd.x) / 2, y: (nextStart.y + nextEnd.y) / 2 }
+        const shiftX = newMid.x - oldMid.x
+        const shiftY = newMid.y - oldMid.y
+        s.controlPoint = {
+          x: s.controlPoint.x + shiftX,
+          y: s.controlPoint.y + shiftY,
+        }
+      }
+
+      // Scale orthogonal midOffset proportionally so the elbow never overshoots when cards move closer
+      if (s.curvature === 'orthogonal' && s.midOffset !== undefined) {
+        const startOri = s.startOrientation ?? (Math.abs(newDx) >= Math.abs(newDy) ? 'horizontal' : 'vertical')
+        const endOri = s.endOrientation ?? startOri
+        if (startOri === 'horizontal' && endOri === 'horizontal') {
+          if (Math.abs(oldDx) > 10 && Math.sign(newDx) === Math.sign(oldDx)) {
+            const ratio = Math.max(0.15, Math.min(0.85, s.midOffset / oldDx))
+            s.midOffset = newDx * ratio
+          } else {
+            s.midOffset = undefined
+          }
+        } else if (startOri === 'vertical' && endOri === 'vertical') {
+          if (Math.abs(oldDy) > 10 && Math.sign(newDy) === Math.sign(oldDy)) {
+            const ratio = Math.max(0.15, Math.min(0.85, s.midOffset / oldDy))
+            s.midOffset = newDy * ratio
+          } else {
+            s.midOffset = undefined
+          }
+        }
+      }
+
+      s.x = nextStart.x
+      s.y = nextStart.y
+      s.width = newDx
+      s.height = newDy
+    }
+  }
+
+  /**
+   * Clears `startAnchor` / `endAnchor` on any connector pointing to a deleted object ID.
+   */
+  function detachAnchorsTo(deletedIds: Set<string>) {
+    if (!deletedIds.size) return
+    for (const s of shapes.value) {
+      if (!isLine(s)) continue
+      const sId = anchorTargetId(s.startAnchor)
+      if (sId && deletedIds.has(sId)) {
+        delete s.startAnchor
+      }
+      const eId = anchorTargetId(s.endAnchor)
+      if (eId && deletedIds.has(eId)) {
+        delete s.endAnchor
+      }
+    }
   }
 
   function boundsOfKey(key: string): Box | undefined {
@@ -306,9 +449,14 @@ export function useWhiteboardSelection(opts: UseWhiteboardSelectionOptions) {
           }
           handles.push({ id: 'mid', x: midOnCurve.x, y: midOnCurve.y })
         } else if (s.curvature === 'orthogonal') {
+          const lockedStartOri = orientationForSide(s.startAnchor?.side)
+          const lockedEndOri = orientationForSide(s.endAnchor?.side)
           const defStartOri = s.orientation ?? (Math.abs(s.width) >= Math.abs(s.height) ? 'horizontal' : 'vertical')
-          const startOri = s.startOrientation ?? defStartOri
-          const endOri = s.endOrientation ?? (s.startOrientation ? (startOri === 'horizontal' ? 'horizontal' : 'vertical') : defStartOri)
+          const startOri = lockedStartOri ?? s.startOrientation ?? defStartOri
+          const endOri =
+            lockedEndOri ??
+            s.endOrientation ??
+            (s.startOrientation || lockedStartOri ? (startOri === 'horizontal' ? 'horizontal' : 'vertical') : defStartOri)
           if (startOri === 'vertical' && endOri === 'vertical') {
             const midY = s.midOffset !== undefined ? s.y + s.midOffset : s.y + s.height / 2
             handles.push({ id: 'mid', x: s.x + s.width / 2, y: midY })
@@ -463,6 +611,19 @@ export function useWhiteboardSelection(opts: UseWhiteboardSelectionOptions) {
   )
   const hasSelectedItems = computed(() => selected.value.length > 0)
 
+  const selectionStartAnchored = computed(() =>
+    selectedShapeIds.value.some((id) => {
+      const s = shapes.value.find((x) => x.id === id)
+      return !!(s && isLine(s) && anchorTargetId(s.startAnchor))
+    }),
+  )
+  const selectionEndAnchored = computed(() =>
+    selectedShapeIds.value.some((id) => {
+      const s = shapes.value.find((x) => x.id === id)
+      return !!(s && isLine(s) && anchorTargetId(s.endAnchor))
+    }),
+  )
+
   function hitTest(pt: Point, only?: string[]): string | undefined {
     const tol = 12 / zoom.value
     const allowed = (key: string) => !only || only.includes(key)
@@ -501,10 +662,12 @@ export function useWhiteboardSelection(opts: UseWhiteboardSelectionOptions) {
   function deleteSelected() {
     if (!selected.value.length) return
     const gone = new Set(selected.value)
+    const deletedObjectIds = new Set(selected.value.map((k) => parseKey(k).id))
     strokes.value = strokes.value.filter((s) => !gone.has(keyOf('stroke', s.id)))
     shapes.value = shapes.value.filter((s) => !gone.has(keyOf('shape', s.id)))
     cards.value = cards.value.filter((c) => !gone.has(keyOf('card', c.id)))
     stickies.value = stickies.value.filter((s) => !gone.has(keyOf('sticky', s.id)))
+    detachAnchorsTo(deletedObjectIds)
     selected.value = []
     editingId.value = null
     pushHistory()
@@ -523,6 +686,13 @@ export function useWhiteboardSelection(opts: UseWhiteboardSelectionOptions) {
       else {
         copy.x += offset
         copy.y += offset
+        if (found.kind === 'shape' && isLine(copy)) {
+          delete copy.startAnchor
+          delete copy.endAnchor
+          if (copy.controlPoint) {
+            copy.controlPoint = { x: copy.controlPoint.x + offset, y: copy.controlPoint.y + offset }
+          }
+        }
       }
       if (found.kind === 'stroke') strokes.value.push(copy)
       else if (found.kind === 'shape') shapes.value.push(copy)
@@ -656,7 +826,7 @@ export function useWhiteboardSelection(opts: UseWhiteboardSelectionOptions) {
     let changed = false
     for (const id of selectedShapeIds.value) {
       const s = shapes.value.find((x) => x.id === id)
-      if (s && isLine(s)) {
+      if (s && isLine(s) && !anchorTargetId(s.startAnchor)) {
         s.startOrientation = ori
         s.midOffset = undefined
         changed = true
@@ -669,7 +839,7 @@ export function useWhiteboardSelection(opts: UseWhiteboardSelectionOptions) {
     let changed = false
     for (const id of selectedShapeIds.value) {
       const s = shapes.value.find((x) => x.id === id)
-      if (s && isLine(s)) {
+      if (s && isLine(s) && !anchorTargetId(s.endAnchor)) {
         s.endOrientation = ori
         s.midOffset = undefined
         changed = true
@@ -854,8 +1024,12 @@ export function useWhiteboardSelection(opts: UseWhiteboardSelectionOptions) {
   const selectionStartOrientation = computed<'horizontal' | 'vertical'>(() => {
     for (const id of selectedShapeIds.value) {
       const s = shapes.value.find((x) => x.id === id)
-      if (s && isLine(s) && s.startOrientation) return s.startOrientation
-      if (s && isLine(s) && s.orientation) return s.orientation
+      if (s && isLine(s)) {
+        const locked = orientationForSide(s.startAnchor?.side)
+        if (locked) return locked
+        if (s.startOrientation) return s.startOrientation
+        if (s.orientation) return s.orientation
+      }
     }
     return 'horizontal'
   })
@@ -863,8 +1037,12 @@ export function useWhiteboardSelection(opts: UseWhiteboardSelectionOptions) {
   const selectionEndOrientation = computed<'horizontal' | 'vertical'>(() => {
     for (const id of selectedShapeIds.value) {
       const s = shapes.value.find((x) => x.id === id)
-      if (s && isLine(s) && s.endOrientation) return s.endOrientation
-      if (s && isLine(s) && s.orientation) return s.orientation
+      if (s && isLine(s)) {
+        const locked = orientationForSide(s.endAnchor?.side)
+        if (locked) return locked
+        if (s.endOrientation) return s.endOrientation
+        if (s.orientation) return s.orientation
+      }
     }
     return 'horizontal'
   })
@@ -1086,6 +1264,8 @@ export function useWhiteboardSelection(opts: UseWhiteboardSelectionOptions) {
       if (selectedCard.value.height < 260) selectedCard.value.height = 280
       if (selectedCard.value.width < 300) selectedCard.value.width = 320
     }
+    syncAnchoredConnectors()
+    void nextTick(() => syncAnchoredConnectors())
     pushHistory()
     notifyChange()
   }
@@ -1107,6 +1287,8 @@ export function useWhiteboardSelection(opts: UseWhiteboardSelectionOptions) {
     if (current.length > 0 && selectedCard.value.height < 140) {
       selectedCard.value.height = Math.max(selectedCard.value.height, 120 + current.length * 22)
     }
+    syncAnchoredConnectors()
+    void nextTick(() => syncAnchoredConnectors())
     pushHistory()
     notifyChange()
   }
@@ -1115,6 +1297,10 @@ export function useWhiteboardSelection(opts: UseWhiteboardSelectionOptions) {
     selected,
     isSelected,
     findItem,
+    getSnapTargets,
+    findSnapTarget,
+    syncAnchoredConnectors,
+    detachAnchorsTo,
     boundsOfKey,
     allKeys,
     getAllRawItems,
@@ -1134,6 +1320,8 @@ export function useWhiteboardSelection(opts: UseWhiteboardSelectionOptions) {
     hasSelectedLines,
     hasSelected2DShapes,
     hasSelectedItems,
+    selectionStartAnchored,
+    selectionEndAnchored,
     hitTest,
     hitHandle,
     deleteSelected,

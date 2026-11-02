@@ -38,6 +38,17 @@ export type ArrowHeadType = 'single' | 'double' | 'dot' | 'none'
 export type LineTermination = 'none' | 'arrow' | 'dot'
 export type ShapeFill = 'none' | 'tint' | 'white' | 'solid'
 
+export type AnchorTargetKind = 'card' | 'sticky' | 'shape'
+export type AnchorSide = 'top' | 'bottom' | 'left' | 'right'
+
+export interface ConnectorAnchor {
+  targetId?: string
+  targetKind?: AnchorTargetKind
+  /** Kept for backward compatibility with card-only anchors */
+  cardId?: string
+  side?: AnchorSide
+}
+
 export interface ShapeElement {
   id: string
   type: ShapeType
@@ -61,8 +72,8 @@ export interface ShapeElement {
   startOrientation?: 'horizontal' | 'vertical'
   endOrientation?: 'horizontal' | 'vertical'
   text?: string
-  startAnchor?: { cardId?: string; side?: 'top' | 'bottom' | 'left' | 'right' }
-  endAnchor?: { cardId?: string; side?: 'top' | 'bottom' | 'left' | 'right' }
+  startAnchor?: ConnectorAnchor
+  endAnchor?: ConnectorAnchor
   zIndex?: number
   rotation?: number
 }

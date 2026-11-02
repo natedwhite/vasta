@@ -9,6 +9,7 @@ import { WHITEBOARD_CTX } from './context.ts'
 import { newId } from './ids.ts'
 import {
   STICKY_FONT_SIZES,
+  getAllAnchorPoints,
   getConnectorGeometry,
   getShapeFill,
   getStrokeDash,
@@ -152,6 +153,9 @@ const {
   isOnlySelectedLine,
   selectedGeometry,
   handles,
+  detachAnchorsTo,
+  selectionStartAnchored,
+  selectionEndAnchored,
 } = selectionState
 
 const historyState = useWhiteboardHistory({
@@ -197,6 +201,7 @@ const {
   activeMode,
   touchPanning,
   mousePanning,
+  hoveredSnapAnchor,
   getCanvasCoords,
   startEditing,
   onStickyFocus,
@@ -325,6 +330,7 @@ function onPickObject(obj: ObjectSummary) {
 
 function removeCard(id: string) {
   cards.value = cards.value.filter((c) => c.id !== id)
+  detachAnchorsTo(new Set([id]))
   selected.value = selected.value.filter((k) => k !== keyOf('card', id))
   pushHistory()
 }
@@ -634,13 +640,34 @@ const polyPath = (pts: Point[]) => pts.map((p, i) => `${i ? 'L' : 'M'} ${p.x} ${
             </template>
           </g>
         </template>
+        <!-- Visual Snap Candidate Feedback (4 edge ports on target + active snap ring) -->
+        <template v-if="hoveredSnapAnchor">
+          <circle
+            v-for="ap in getAllAnchorPoints(hoveredSnapAnchor.target)"
+            :key="ap.side"
+            :cx="ap.point.x"
+            :cy="ap.point.y"
+            :r="(ap.side === hoveredSnapAnchor.side ? 6.5 : 4.5) / zoom"
+            :fill="ap.side === hoveredSnapAnchor.side ? '#3b82f6' : 'white'"
+            stroke="#3b82f6"
+            :stroke-width="2 / zoom"
+          />
+          <circle
+            :cx="hoveredSnapAnchor.point.x"
+            :cy="hoveredSnapAnchor.point.y"
+            :r="12 / zoom"
+            fill="#3b82f626"
+            stroke="#3b82f6"
+            :stroke-width="1.75 / zoom"
+          />
+        </template>
         <circle
           v-for="h in handles"
           :key="h.id"
           :cx="h.x"
           :cy="h.y"
           :r="(isOnlySelectedLine ? 9 : 8) / zoom"
-          fill="white"
+          :fill="isOnlySelectedLine && ((h.id === 'start' && selectionStartAnchored) || (h.id === 'end' && selectionEndAnchored)) ? '#dbeafe' : 'white'"
           stroke="#3b82f6"
           :stroke-width="2 / zoom"
         />
