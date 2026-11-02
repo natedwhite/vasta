@@ -1022,7 +1022,7 @@ export function useWhiteboardInteractions(opts: {
         }
       }
 
-      if (currentTool.value === 'select' || !pencilOnly.value) {
+      if (!pencilOnly.value) {
         touchActive = true
         beginInteraction(pt, 'touch')
       } else {
