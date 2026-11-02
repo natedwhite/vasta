@@ -13,6 +13,7 @@
   --color-ink-soft: #5f5c57;
   --color-ink-faint: #9a968f;
   --color-accent: #2f6fea;
+  --color-primary: #2f6fea;
   --color-hover: #efede8;
   /* Charts (components/BarChart.vue): the series and a value past its target. Checked with the
      dataviz validator against each mode's surface. */
@@ -47,6 +48,7 @@
   --color-ink-soft: #b1ada6;
   --color-ink-faint: #7c7973;
   --color-accent: #6b9bff;
+  --color-primary: #6b9bff;
   --color-hover: #292d32;
   --color-chart-over: #c47a0c;
   --color-kcal: #3987e5;

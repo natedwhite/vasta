@@ -35,10 +35,11 @@ export function checkDoc(doc: JsonDoc, schema: Schema = vastaSchema()): JsonDoc 
 
 /** A map in each Y.Doc for Vasta's own bookkeeping, not a text field (see markDeletions). */
 const META = 'vasta'
+const isInternalMap = (name: string) => name === META || name.startsWith('wb_')
 
 /** Names of the fields a Y.Doc holds text for (empty fragments count as absent). */
 export function textFields(ydoc: Y.Doc): string[] {
-  return [...ydoc.share.keys()].filter((name) => name !== META && ydoc.getXmlFragment(name).length > 0).sort()
+  return [...ydoc.share.keys()].filter((name) => !isInternalMap(name) && ydoc.getXmlFragment(name).length > 0).sort()
 }
 
 /**

@@ -84,6 +84,8 @@ export const ObjectEmbed = Node.create({
     display: { default: 'card', parseHTML: (el) => el.getAttribute('data-display'), renderHTML: (a) => ({ 'data-display': a.display }) },
     // One block of the object instead of the whole (display "block"): a read-only copy kept current.
     blockId: { default: null, parseHTML: (el) => el.getAttribute('data-target-block'), renderHTML: (a) => (a.blockId ? { 'data-target-block': a.blockId } : {}) },
+    // A specific framed scene of a whiteboard to display
+    sceneId: { default: null, parseHTML: (el) => el.getAttribute('data-scene-id'), renderHTML: (a) => (a.sceneId ? { 'data-scene-id': a.sceneId } : {}) },
   }),
   parseHTML: () => [{ tag: 'div[data-type="object-embed"]' }],
   renderHTML: ({ HTMLAttributes }) => ['div', mergeAttributes(HTMLAttributes, { 'data-type': 'object-embed' })],
@@ -212,7 +214,7 @@ export const BlockAttributes = Extension.create({
 })
 
 /** Attributes left out of the JSON while unset: the shared block ones, and a mention's or embed's block. */
-const SHARED_ATTRS = ['id', 'textColor', 'background', 'blockId', 'blockLabel']
+const SHARED_ATTRS = ['id', 'textColor', 'background', 'blockId', 'blockLabel', 'sceneId']
 
 /**
  * A document's JSON without the shared block attributes that are unset (ProseMirror writes every

@@ -11,11 +11,16 @@ import { formulaValue } from '../lib/properties.ts'
 import AppIcon from './AppIcon.vue'
 import ObjectChip from './ObjectChip.vue'
 import PropertyDisplay from './PropertyDisplay.vue'
+import WhiteboardPreview from './whiteboard/WhiteboardPreview.vue'
 
 const props = defineProps<{ object: ObjectSummary; type: ObjectType | undefined; variant: 'grid' | 'wall' | 'gallery' | 'kanban'; fields?: PropertyDef[]; hide?: string[] }>()
 
 const broken = ref(false)
 const image = computed(() => (broken.value ? undefined : imageOf(props.object)))
+const isWhiteboard = computed(() => {
+  const name = props.type?.name?.toLowerCase()
+  return name === 'whiteboard' || name === 'sketch' || props.type?.system === 'whiteboard' || props.object.typeId?.includes('whiteboard') || props.object.typeId?.includes('sketch')
+})
 const hasValue = (p: PropertyDef) => (p.kind === 'formula' ? !['empty', 'error'].includes(formulaValue(props.object, p).kind) : p.kind !== 'rich-text' && !!props.object.props[p.id])
 const blocked = computed(() => {
   const value = props.object.props[BLOCKED_PROPERTY_ID]
@@ -41,6 +46,14 @@ const shownProps = computed(() =>
       loading="lazy"
       class="w-full bg-hover object-cover"
       @error="broken = true"
+      :class="variant === 'gallery' ? 'aspect-[4/3]' : variant === 'wall' ? 'max-h-64' : 'h-32'"
+    />
+    <WhiteboardPreview
+      v-else-if="isWhiteboard && variant !== 'kanban'"
+      :object-id="object.id"
+      :object="object"
+      :interactive="false"
+      class="w-full pointer-events-none"
       :class="variant === 'gallery' ? 'aspect-[4/3]' : variant === 'wall' ? 'max-h-64' : 'h-32'"
     />
     <div v-else-if="variant === 'gallery'" class="grid aspect-[4/3] w-full place-items-center bg-hover text-ink-faint">

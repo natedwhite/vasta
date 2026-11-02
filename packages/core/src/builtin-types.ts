@@ -88,7 +88,7 @@ interface BuiltinSpec {
   properties: PropertyDef[]
 }
 
-const DEFAULT_LAYOUTS: Partial<Record<SystemTypeKey, ViewLayout>> = { image: 'gallery', weblink: 'gallery' }
+const DEFAULT_LAYOUTS: Partial<Record<SystemTypeKey, ViewLayout>> = { image: 'gallery', weblink: 'gallery', whiteboard: 'gallery' }
 
 const specs: Record<SystemTypeKey, BuiltinSpec> = {
   page: { name: 'Page', pluralName: 'Pages', icon: 'ph:file-text', properties: [body] },
@@ -152,6 +152,12 @@ const specs: Record<SystemTypeKey, BuiltinSpec> = {
     ],
   },
   quote: { name: 'Quote', pluralName: 'Quotes', icon: 'ph:quotes', properties: [{ id: SOURCE_PROPERTY_ID, kind: 'relation', name: 'Source', targetTypeIds: [], multiple: false }, body] },
+  whiteboard: {
+    name: 'Whiteboard',
+    pluralName: 'Whiteboards',
+    icon: 'ph:chalkboard-teacher',
+    properties: [body],
+  },
   // Nutrition (nutrition.ts): made in a space when it turns food tracking on.
   food: {
     name: 'Food',

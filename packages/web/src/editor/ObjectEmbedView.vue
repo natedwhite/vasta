@@ -6,6 +6,7 @@ import AppIcon from '../components/AppIcon.vue'
 import EmbedFrame from '../components/EmbedFrame.vue'
 import QueryEmbed from '../components/QueryEmbed.vue'
 import BlockEmbed from './BlockEmbed.vue'
+import WhiteboardPreview from '../components/whiteboard/WhiteboardPreview.vue'
 import { chip, iconTextClasses } from '../lib/colors.ts'
 import { embedFor } from '../lib/embeds.ts'
 import { displayTitle } from '../lib/format.ts'
@@ -28,6 +29,7 @@ const broken = ref(false)
 const asImage = computed(() => display.value === 'image' && !!image.value && !broken.value)
 const pageId = inject(PAGE_OBJECT_ID, undefined)
 const isQuery = computed(() => type.value?.system === 'query')
+const isWhiteboard = computed(() => type.value?.system === 'whiteboard' || ['whiteboard', 'sketch'].includes(type.value?.name?.toLowerCase() ?? ''))
 /** "Embed" display of a weblink from a known site: the provider's player instead of a card. */
 const player = computed(() => (display.value === 'embed' && type.value?.system === 'weblink' ? embedFor(summary.value?.media?.url) : undefined))
 </script>
@@ -59,6 +61,15 @@ const player = computed(() => (display.value === 'embed' && type.value?.system =
       </button>
       <figcaption v-if="summary?.preview" class="mt-1 text-sm text-ink-faint">{{ summary.preview }}</figcaption>
     </figure>
+
+    <!-- Whiteboards show a live miniature -->
+    <WhiteboardPreview
+      v-else-if="isWhiteboard && display !== 'inline'"
+      :object-id="objectId"
+      :object="summary"
+      :scene-id="(props.node.attrs.sceneId as string | null)"
+      @select-scene="(id) => props.updateAttributes({ sceneId: id })"
+    />
 
     <!-- Queries show their live results -->
     <QueryEmbed v-else-if="isQuery" :object-id="objectId" :parent-id="pageId" />

@@ -45,6 +45,7 @@ import { openMenuAt, promptDialog, type MenuItem } from '../lib/overlays.ts'
 import { clearOtherDefaults, deleteTemplate, loadTemplates, previewTemplate, rememberTemplate, saveAsTemplate, templateFill, templatesOf } from '../lib/templates.ts'
 import DocPreview from '../components/DocPreview.ts'
 import ModalDialog from '../components/ModalDialog.vue'
+import WhiteboardPageView from '../components/whiteboard/WhiteboardPageView.vue'
 import { writeContent, type JsonDoc } from '@vasta/editor-schema/yjs'
 
 /** `embedded`: only the text and what links here, inside another page (the calendar's day). */
@@ -59,6 +60,10 @@ const status = ref<'saved' | 'saving' | 'unsaved'>('saved')
 const titleInput = ref<HTMLTextAreaElement | null>(null)
 
 const type = computed(() => typesById.value.get(object.value?.typeId ?? ''))
+const isWhiteboard = computed(() => {
+  const name = type.value?.name?.toLowerCase()
+  return name === 'whiteboard' || name === 'sketch' || type.value?.system === 'whiteboard' || object.value?.typeId?.includes('whiteboard') || object.value?.typeId?.includes('sketch')
+})
 const tagType = computed(() => systemType('tag'))
 /** Rich-text fields; one marked "hide when empty" (a weblink's readable text) shows once it has content. */
 const richFields = computed(() =>
@@ -585,6 +590,12 @@ async function startFrom(template: ObjectRecord) {
 
 <template>
   <div v-if="missing" class="grid h-full place-items-center text-sm text-ink-soft">This object does not exist or was deleted for good.</div>
+
+  <WhiteboardPageView
+    v-else-if="object && isWhiteboard && !embedded"
+    :object="object"
+    :type="type"
+  />
 
   <article v-else-if="object" ref="article" :class="embedded ? '' : 'pb-32'">
     <div v-if="object.deletedAt && !embedded" class="flex flex-wrap items-center gap-x-3 gap-y-1 border-b border-red-200 bg-red-50 px-4 py-2 text-sm text-red-800 dark:border-red-900/60 dark:bg-red-950/40 dark:text-red-200">

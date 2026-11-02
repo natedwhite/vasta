@@ -7,7 +7,8 @@ import tailwindcss from '@tailwindcss/vite'
 import vue from '@vitejs/plugin-vue'
 import { defineConfig, type Plugin } from 'vite'
 
-const api = process.env.VASTA_API ?? 'http://127.0.0.1:5174'
+const host = process.env.HOST ?? '127.0.0.1'
+const api = process.env.VASTA_API ?? `http://${host}:5174`
 const here = path.dirname(fileURLToPath(import.meta.url))
 
 /**
@@ -72,7 +73,7 @@ export default defineConfig({
   // The replica worker (src/replica/worker.ts) is a module worker with chunks of its own.
   worker: { format: 'es' },
   server: {
-    host: '127.0.0.1',
+    host: host,
     port: 5173,
     proxy: { '/api': api, '/media': api, '/mcp': api },
   },
