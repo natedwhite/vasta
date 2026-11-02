@@ -216,7 +216,7 @@ const typeOf = (object: ObjectSummary) => typesById.value.get(object.typeId)
 
 <template>
   <Teleport to="body">
-    <div v-if="ui.paletteOpen" class="fixed inset-0 z-50 flex items-start justify-center bg-black/25 px-3 pt-[calc(0.75rem+env(safe-area-inset-top))] md:px-4 md:pt-[12vh]" @mousedown.self="ui.paletteOpen = false">
+    <div v-if="ui.paletteOpen" class="fixed inset-0 z-50 flex items-start justify-center bg-black/25 px-3 pt-[calc(0.75rem+var(--safe-area-top))] md:px-4 md:pt-[12vh]" @mousedown.self="ui.paletteOpen = false">
       <div class="w-full max-w-xl overflow-hidden rounded-2xl border border-line bg-surface shadow-2xl">
         <div class="flex items-center gap-2 border-b border-line px-4">
           <AppIcon fallback="ph:magnifying-glass" class="text-ink-faint" />

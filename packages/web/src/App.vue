@@ -62,7 +62,7 @@ function onTouchEnd(event: TouchEvent) {
 </script>
 
 <template>
-  <div v-if="session.user && workspace.ready" class="flex h-full flex-col pt-[env(safe-area-inset-top)]" @touchstart.passive="onTouchStart" @touchend.passive="onTouchEnd">
+  <div v-if="session.user && workspace.ready" class="flex h-full flex-col pt-[var(--safe-area-top)]" @touchstart.passive="onTouchStart" @touchend.passive="onTouchEnd">
     <!-- With the macOS traffic lights over the top-left corner, the banner goes below the top bar. -->
     <OfflineBanner v-if="!trafficLights" />
     <div class="relative flex min-h-0 flex-1">
@@ -70,7 +70,7 @@ function onTouchEnd(event: TouchEvent) {
         <div v-if="isPhone && ui.sidebarOpen" class="fixed inset-0 z-30 bg-black/30" @click="ui.sidebarOpen = false" />
       </Transition>
       <AppSidebar
-        class="max-md:fixed max-md:inset-y-0 max-md:left-0 max-md:z-30 max-md:w-[min(18rem,85vw)] max-md:pb-[env(safe-area-inset-bottom)] max-md:pt-[env(safe-area-inset-top)] max-md:shadow-2xl max-md:transition-transform max-md:duration-200"
+        class="max-md:fixed max-md:inset-y-0 max-md:left-0 max-md:z-30 max-md:w-[min(18rem,85vw)] max-md:pb-[env(safe-area-inset-bottom)] max-md:pt-[var(--safe-area-top)] max-md:shadow-2xl max-md:transition-transform max-md:duration-200"
         :class="[isPhone && !ui.sidebarOpen ? 'max-md:-translate-x-full max-md:shadow-none' : '', ui.sidebarCollapsed ? 'md:hidden' : '']"
         :inert="isPhone && !ui.sidebarOpen"
       />

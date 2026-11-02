@@ -61,6 +61,23 @@
   --color-flow-done: #199e70;
 }
 
+:root {
+  --safe-area-top: env(safe-area-inset-top, 0px);
+}
+
+/* Standalone PWA on iOS/iPadOS: iPadOS 26/27 draws a progressive status bar blur over the top ~40px.
+   Ensure the top safe area clears the blur so headers and controls are never obscured. */
+@supports (-webkit-touch-callout: none) {
+  @media (display-mode: standalone) {
+    :root {
+      --safe-area-top: max(env(safe-area-inset-top, 0px), 44px);
+    }
+  }
+  html.standalone {
+    --safe-area-top: max(env(safe-area-inset-top, 0px), 44px);
+  }
+}
+
 html,
 body,
 #app {

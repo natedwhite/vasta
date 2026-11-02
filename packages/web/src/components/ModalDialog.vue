@@ -23,7 +23,7 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKey))
         role="dialog"
         aria-modal="true"
         :aria-label="title"
-        class="flex h-full w-full flex-col overflow-hidden bg-surface pb-[env(safe-area-inset-bottom)] pt-[env(safe-area-inset-top)] md:h-auto md:max-h-[84vh] md:rounded-2xl md:border md:border-line md:pb-0 md:pt-0 md:shadow-2xl"
+        class="flex h-full w-full flex-col overflow-hidden bg-surface pb-[env(safe-area-inset-bottom)] pt-[var(--safe-area-top)] md:h-auto md:max-h-[84vh] md:rounded-2xl md:border md:border-line md:pb-0 md:pt-0 md:shadow-2xl"
         :style="{ maxWidth: isPhone ? undefined : width ?? '40rem' }"
       >
         <header class="flex items-center gap-2 border-b border-line px-4 py-3.5 md:px-5">
