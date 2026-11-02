@@ -87,9 +87,9 @@ const {
           <button class="text-ink-faint hover:text-ink" @click="closeAllPopovers"><AppIcon fallback="ph:x" :size="13" /></button>
         </div>
 
-        <!-- Pen Type: Pen, Pencil, Highlighter -->
+        <!-- Pen Type: Pen, Highlighter -->
         <span class="text-[10px] font-bold uppercase tracking-wider text-ink-faint">Type</span>
-        <div class="grid grid-cols-3 gap-1">
+        <div class="grid grid-cols-2 gap-1">
           <button
             class="flex items-center justify-center gap-1.5 py-1.5 rounded-lg border text-xs transition-all"
             :class="penPresets[activePresetIndex]?.type === 'pen' ? 'border-primary bg-primary/10 text-primary font-medium' : 'border-line hover:bg-hover text-ink-soft'"
@@ -100,19 +100,11 @@ const {
           </button>
           <button
             class="flex items-center justify-center gap-1.5 py-1.5 rounded-lg border text-xs transition-all"
-            :class="penPresets[activePresetIndex]?.type === 'pencil' ? 'border-primary bg-primary/10 text-primary font-medium' : 'border-line hover:bg-hover text-ink-soft'"
-            @click="setPresetType('pencil')"
-          >
-            <AppIcon fallback="ph:pencil-simple" :size="14" />
-            <span>Pencil</span>
-          </button>
-          <button
-            class="flex items-center justify-center gap-1.5 py-1.5 rounded-lg border text-xs transition-all"
             :class="penPresets[activePresetIndex]?.type === 'highlighter' ? 'border-primary bg-primary/10 text-primary font-medium' : 'border-line hover:bg-hover text-ink-soft'"
             @click="setPresetType('highlighter')"
           >
             <AppIcon fallback="ph:highlighter" :size="14" />
-            <span>Marker</span>
+            <span>Highlighter</span>
           </button>
         </div>
 
@@ -641,7 +633,7 @@ const {
             @click="onPresetClick(idx)"
           >
             <div class="relative flex items-center justify-center">
-              <AppIcon :fallback="p.type === 'pencil' ? 'ph:pencil-simple' : p.type === 'highlighter' ? 'ph:highlighter' : 'ph:pen-nib'" :size="16" />
+              <AppIcon :fallback="p.type === 'highlighter' ? 'ph:highlighter' : 'ph:pen-nib'" :size="16" />
               <span class="absolute -bottom-1 -right-1 h-2.5 w-2.5 rounded-full ring-1 ring-surface shadow-xs" :style="{ backgroundColor: p.color }" />
             </div>
           </button>

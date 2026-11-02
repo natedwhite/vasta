@@ -7,7 +7,7 @@ export interface Point {
 }
 
 export type StrokeStyle = 'solid' | 'dashed' | 'dotted' | 'marker'
-export type PenType = 'pen' | 'pencil' | 'highlighter'
+export type PenType = 'pen' | 'highlighter'
 
 export interface PenPreset {
   id: string
