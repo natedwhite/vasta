@@ -65,6 +65,23 @@
   --safe-area-top: env(safe-area-inset-top, 0px);
 }
 
+/* Standalone PWA on iOS/iPadOS:
+   iPadOS reports env(safe-area-inset-top) as 0px in standalone full-screen mode,
+   which causes header buttons to collide with the system clock (y=0..19px) and
+   get caught in WebKit's top-edge status bar progressive blur.
+   A 24px minimum clears the status bar cleanly without creating the large gap that
+   the 44px iPhone notch size caused. */
+@supports (-webkit-touch-callout: none) {
+  @media (display-mode: standalone) {
+    :root {
+      --safe-area-top: max(env(safe-area-inset-top, 0px), 24px);
+    }
+  }
+  html.standalone {
+    --safe-area-top: max(env(safe-area-inset-top, 0px), 24px);
+  }
+}
+
 html,
 body,
 #app {
