@@ -228,7 +228,7 @@ export function useToolSettings(
   }
 
   // Tools & Sub-Modes
-  const currentTool = ref<WhiteboardTool>('select')
+  const currentTool = ref<WhiteboardTool>('hand')
   const selectMode = ref<'box' | 'lasso'>('box')
   const currentShape2D = ref<Shape2DType>('rectangle')
   const shapeFillTab = ref<'outline' | 'fill'>('outline')
