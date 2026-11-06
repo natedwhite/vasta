@@ -36,7 +36,7 @@ import {
   type useWhiteboardSelection,
 } from './useWhiteboardSelection.ts'
 
-export type InteractionMode = 'stroke' | 'shape' | 'erase' | 'move' | 'resize' | 'rotate' | 'marquee' | 'lasso'
+export type InteractionMode = 'stroke' | 'shape' | 'sticky' | 'erase' | 'move' | 'resize' | 'rotate' | 'marquee' | 'lasso'
 type InputKind = 'pen' | 'touch' | 'mouse'
 
 export function useWhiteboardInteractions(opts: {
@@ -215,6 +215,7 @@ export function useWhiteboardInteractions(opts: {
   // Interaction Engine ------------------------------------------------------
   const currentStroke = ref<InkStroke | null>(null)
   const currentShape = ref<ShapeElement | null>(null)
+  const currentDraftSticky = ref<StickyElement | null>(null)
   const marquee = ref<Box | null>(null)
   const lasso = ref<Point[] | null>(null)
   const hoveredSnapAnchor = ref<SnapCandidate | null>(null)
@@ -533,17 +534,21 @@ export function useWhiteboardInteractions(opts: {
     return false
   }
 
-  function addStickyAt(pt: Point) {
+  function addStickyAt(pt: Point, customWidth?: number, customHeight?: number, customX?: number, customY?: number) {
+    const width = customWidth ?? 190
+    const height = customHeight ?? 150
+    const x = customX !== undefined ? customX : pt.x - width / 2
+    const y = customY !== undefined ? customY : pt.y - height / 2
     const sticky: StickyElement = {
       id: newId(),
       text: '',
       color: currentStickyColor.value,
       textColor: currentStickyTextColor.value,
       fontSize: currentStickyFontSize.value,
-      x: pt.x - 90,
-      y: pt.y - 70,
-      width: 190,
-      height: 150,
+      x,
+      y,
+      width,
+      height,
       zIndex: getMaxZIndex() + 1,
     }
     stickies.value.push(sticky)
@@ -683,7 +688,21 @@ export function useWhiteboardInteractions(opts: {
         zIndex: getMaxZIndex() + 1,
       }
     } else if (tool === 'sticky') {
-      addStickyAt(pt)
+      setMode('sticky')
+      selected.value = []
+      startPt = pt
+      currentDraftSticky.value = {
+        id: newId(),
+        text: '',
+        color: currentStickyColor.value,
+        textColor: currentStickyTextColor.value,
+        fontSize: currentStickyFontSize.value,
+        x: pt.x,
+        y: pt.y,
+        width: 0,
+        height: 0,
+        zIndex: getMaxZIndex() + 1,
+      }
     }
   }
 
@@ -692,6 +711,15 @@ export function useWhiteboardInteractions(opts: {
       case 'stroke':
         currentStroke.value?.points.push({ ...pt })
         break
+      case 'sticky': {
+        const st = currentDraftSticky.value
+        if (!st) break
+        st.x = Math.min(startPt.x, pt.x)
+        st.y = Math.min(startPt.y, pt.y)
+        st.width = Math.abs(pt.x - startPt.x)
+        st.height = Math.abs(pt.y - startPt.y)
+        break
+      }
       case 'shape': {
         const s = currentShape.value
         if (!s) break
@@ -857,6 +885,7 @@ export function useWhiteboardInteractions(opts: {
     setMode(null)
     currentStroke.value = null
     currentShape.value = null
+    currentDraftSticky.value = null
     marquee.value = null
     lasso.value = null
     hoveredSnapAnchor.value = null
@@ -891,6 +920,18 @@ export function useWhiteboardInteractions(opts: {
           shapes.value.push(shape)
           selected.value = [keyOf('shape', shape.id)]
           pushHistory()
+        }
+        break
+      }
+      case 'sticky': {
+        const draft = currentDraftSticky.value
+        currentDraftSticky.value = null
+        if (!draft) break
+        const draggedDist = Math.max(draft.width, draft.height) * zoom.value
+        if (draggedDist < 10) {
+          addStickyAt(startPt)
+        } else {
+          addStickyAt(startPt, Math.max(80, draft.width), Math.max(60, draft.height), draft.x, draft.y)
         }
         break
       }
@@ -1413,6 +1454,7 @@ export function useWhiteboardInteractions(opts: {
   return {
     currentStroke,
     currentShape,
+    currentDraftSticky,
     marquee,
     lasso,
     hoveredSnapAnchor,

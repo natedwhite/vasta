@@ -196,6 +196,7 @@ const interactionsState = useWhiteboardInteractions({
 const {
   currentStroke,
   currentShape,
+  currentDraftSticky,
   marquee,
   lasso,
   activeMode,
@@ -603,6 +604,23 @@ const polyPath = (pts: Point[]) => pts.map((p, i) => `${i ? 'L' : 'M'} ${p.x} ${
           />
         </g>
       </svg>
+
+      <!-- Active Sticky Note Overlay (Live in progress) -->
+      <div
+        v-if="currentDraftSticky"
+        class="absolute flex flex-col rounded-xl border p-3 shadow-md pointer-events-none"
+        :style="{
+          left: `${currentDraftSticky.x}px`,
+          top: `${currentDraftSticky.y}px`,
+          width: `${currentDraftSticky.width}px`,
+          height: `${currentDraftSticky.height}px`,
+          zIndex: 999999,
+          background: stickyStyle(currentDraftSticky.color).bg,
+          borderColor: stickyStyle(currentDraftSticky.color).border,
+          borderStyle: 'dashed',
+          opacity: 0.85,
+        }"
+      />
 
       <!-- Selection & Resize Handles Overlay -->
       <svg

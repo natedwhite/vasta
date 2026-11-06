@@ -18,6 +18,7 @@ GitHub release page.
 
 ### Changed
 
+- **Sticky note creation on whiteboard.** Dragging with the sticky note tool now interactively sizes and creates a sticky note matching the dragged bounding box, with a live dashed preview while dragging (clicking still creates a default-sized note).
 - **The toggle's arrow** is bigger and sits centered on the title's line; the lines inside line up
   with the title.
 
