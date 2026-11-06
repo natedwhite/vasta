@@ -448,26 +448,6 @@ export function useWhiteboardSelection(opts: UseWhiteboardSelectionOptions) {
             y: 0.25 * pStart.y + 0.5 * ctrl.y + 0.25 * pEnd.y,
           }
           handles.push({ id: 'mid', x: midOnCurve.x, y: midOnCurve.y })
-        } else if (s.curvature === 'orthogonal') {
-          const lockedStartOri = orientationForSide(s.startAnchor?.side)
-          const lockedEndOri = orientationForSide(s.endAnchor?.side)
-          const defStartOri = s.orientation ?? (Math.abs(s.width) >= Math.abs(s.height) ? 'horizontal' : 'vertical')
-          const startOri = lockedStartOri ?? s.startOrientation ?? defStartOri
-          const endOri =
-            lockedEndOri ??
-            s.endOrientation ??
-            (s.startOrientation || lockedStartOri ? (startOri === 'horizontal' ? 'horizontal' : 'vertical') : defStartOri)
-          if (startOri === 'vertical' && endOri === 'vertical') {
-            const midY = s.midOffset !== undefined ? s.y + s.midOffset : s.y + s.height / 2
-            handles.push({ id: 'mid', x: s.x + s.width / 2, y: midY })
-          } else if (startOri === 'horizontal' && endOri === 'horizontal') {
-            const midX = s.midOffset !== undefined ? s.x + s.midOffset : s.x + s.width / 2
-            handles.push({ id: 'mid', x: midX, y: s.y + s.height / 2 })
-          } else if (startOri === 'horizontal' && endOri === 'vertical') {
-            handles.push({ id: 'mid', x: s.x + s.width, y: s.y })
-          } else {
-            handles.push({ id: 'mid', x: s.x, y: s.y + s.height })
-          }
         }
 
         return {

@@ -605,7 +605,10 @@ const polyPath = (pts: Point[]) => pts.map((p, i) => `${i ? 'L' : 'M'} ${p.x} ${
       </svg>
 
       <!-- Selection & Resize Handles Overlay -->
-      <svg class="pointer-events-none absolute left-0 top-0 h-px w-px overflow-visible">
+      <svg
+        class="pointer-events-none absolute left-0 top-0 h-px w-px overflow-visible"
+        :style="{ zIndex: 1000000 }"
+      >
         <template v-if="selectedGeometry && !isOnlySelectedLine">
           <g :transform="selectedGeometry.rotation ? `rotate(${selectedGeometry.rotation} ${selectedGeometry.center.x} ${selectedGeometry.center.y})` : undefined">
             <rect

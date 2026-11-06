@@ -21,6 +21,10 @@ GitHub release page.
 - **The toggle's arrow** is bigger and sits centered on the title's line; the lines inside line up
   with the title.
 
+### Fixed
+
+- **Whiteboard connectors.** Arrow connectors now terminate cleanly at the outer boundary of snapped objects, the midpoint control handle on curved connectors renders on top of the stroke, and elbow (angle) connectors no longer display an unnecessary middle handle when selected.
+
 ## 0.4.1 (2026-10-27)
 
 ### Added

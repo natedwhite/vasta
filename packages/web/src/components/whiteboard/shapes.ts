@@ -279,27 +279,8 @@ export interface ConnectorGeometry {
  * and outward normals prevent lines from cutting backward through the inside of a card.
  */
 export function getConnectorGeometry(s: ShapeElement): ConnectorGeometry {
-  const x1 = s.x
-  const y1 = s.y
-  const x2 = s.x + s.width
-  const y2 = s.y + s.height
   const strokeW = s.strokeWidth || 3
   const curvature: LineCurvature = s.curvature || 'straight'
-
-  const arrowLen = Math.max(14, strokeW * 4.2)
-  const arrowWidth = Math.max(12, strokeW * 3.6)
-  const dotRadius = Math.max(5.5, strokeW * 1.8)
-
-  const dx = x2 - x1
-  const dy = y2 - y1
-  const dist = Math.hypot(dx, dy)
-
-  if (dist < 4) {
-    return {
-      shaftPath: `M ${x1} ${y1} L ${x2} ${y2}`,
-      hitPoints: [{ x: x1, y: y1 }, { x: x2, y: y2 }],
-    }
-  }
 
   const startTerm: LineTermination = s.startHead ?? (s.arrowHead === 'double' ? 'arrow' : 'none')
   const endTerm: LineTermination =
@@ -318,6 +299,43 @@ export function getConnectorGeometry(s: ShapeElement): ConnectorGeometry {
   const hasStartDot = startTerm === 'dot'
   const hasEndArrow = endTerm === 'arrow'
   const hasEndDot = endTerm === 'dot'
+
+  // Outer edge offset when snapped to an object so arrow termination touches the outer edge
+  // rather than penetrating to the inner edge/interior. Dot termination remains centered on the edge.
+  const SNAP_OUTER_OFFSET = 3.5
+
+  let x1 = s.x
+  let y1 = s.y
+  if (s.startAnchor?.side && !hasStartDot) {
+    if (s.startAnchor.side === 'left') x1 -= SNAP_OUTER_OFFSET
+    else if (s.startAnchor.side === 'right') x1 += SNAP_OUTER_OFFSET
+    else if (s.startAnchor.side === 'top') y1 -= SNAP_OUTER_OFFSET
+    else if (s.startAnchor.side === 'bottom') y1 += SNAP_OUTER_OFFSET
+  }
+
+  let x2 = s.x + s.width
+  let y2 = s.y + s.height
+  if (s.endAnchor?.side && !hasEndDot) {
+    if (s.endAnchor.side === 'left') x2 -= SNAP_OUTER_OFFSET
+    else if (s.endAnchor.side === 'right') x2 += SNAP_OUTER_OFFSET
+    else if (s.endAnchor.side === 'top') y2 -= SNAP_OUTER_OFFSET
+    else if (s.endAnchor.side === 'bottom') y2 += SNAP_OUTER_OFFSET
+  }
+
+  const arrowLen = Math.max(14, strokeW * 4.2)
+  const arrowWidth = Math.max(12, strokeW * 3.6)
+  const dotRadius = Math.max(5.5, strokeW * 1.8)
+
+  const dx = x2 - x1
+  const dy = y2 - y1
+  const dist = Math.hypot(dx, dy)
+
+  if (dist < 4) {
+    return {
+      shaftPath: `M ${x1} ${y1} L ${x2} ${y2}`,
+      hitPoints: [{ x: x1, y: y1 }, { x: x2, y: y2 }],
+    }
+  }
 
   if (curvature === 'orthogonal') {
     const lockedStartOri = orientationForSide(s.startAnchor?.side)
