@@ -189,6 +189,11 @@ export interface RelationPropertyDef extends PropertyDefBase {
   /** Allowed target type ids. Empty means any type. */
   targetTypeIds: Id[]
   multiple: boolean
+  /**
+   * What the other side is called on the objects it points to ("Wrote" for a book's Author, on a
+   * person). Without it, that side shows this type's plural name and the property's.
+   */
+  reverseName?: string
 }
 export interface SelectPropertyDef extends PropertyDefBase {
   kind: 'select'
@@ -461,6 +466,8 @@ export interface CaptureInfo {
   /** Channel key, e.g. "telegram", "api", "shortcuts". */
   channel: string
   at: IsoDateTime
+  /** A capture logged only in the daily note. */
+  inbox?: false
   /** Dealt with ("Reviewed", or the user's word for it): the inbox hides it until shown again. */
   done?: boolean
 }

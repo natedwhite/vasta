@@ -82,7 +82,7 @@ describe('MCP endpoint', () => {
   it('offers the tools, limited to the token user’s spaces', async () => {
     const { client, call } = await setup()
     const { tools } = await client.listTools()
-    expect(tools.map((t) => t.name).sort()).toEqual(['add_comment', 'capture', 'create_object', 'delete_food_entry', 'get_daily_note', 'get_object', 'list_habits', 'list_inbox', 'list_spaces', 'list_templates', 'list_types', 'log_food', 'log_habit', 'nutrition_day', 'query', 'save_food', 'search', 'update_object'])
+    expect(tools.map((t) => t.name).sort()).toEqual(['add_comment', 'capture', 'create_object', 'delete_food_entry', 'edit_board', 'get_board', 'get_daily_note', 'get_object', 'list_habits', 'list_inbox', 'list_spaces', 'list_templates', 'list_types', 'log_food', 'log_habit', 'nutrition_day', 'query', 'save_food', 'search', 'set_pinned', 'update_object', 'write_daily_note'])
     expect(await call('list_spaces')).toEqual([{ id: 's', name: 'Notes', default: true }])
     const types = await call('list_types')
     expect(types.find((t: { name: string }) => t.name === 'Book').properties.find((p: { name: string }) => p.name === 'Genre')).toEqual({ id: 'genre', name: 'Genre', kind: 'select', multiple: false, options: ['Sci-fi'] })
@@ -108,6 +108,11 @@ describe('MCP endpoint', () => {
     // The author did not exist: a page was made for them, and it links back.
     const author = await call('get_object', { id: created.properties.Author[0].id })
     expect(author).toMatchObject({ title: 'Frank Herbert', type: 'Page', backlinks: [{ id: created.id, title: 'Dune', kind: 'relation' }] })
+    // Named on the other side, the link back carries that name.
+    const book = store.getType(store.getObject(created.id)!.typeId)!
+    store.putType({ ...book, properties: book.properties.map((p) => (p.id === 'author' && p.kind === 'relation' ? { ...p, reverseName: 'Wrote' } : p)) })
+    expect((await call('get_object', { id: author.id })).backlinks).toEqual([{ id: created.id, title: 'Dune', kind: 'relation', as: 'Wrote' }])
+    expect((await call('list_types', {})).find((t: { name: string }) => t.name === 'Book').properties.find((p: { id: string }) => p.id === 'author')).toMatchObject({ reverseName: 'Wrote' })
     expect(store.getObject(created.id)!.content.body!.content[0]).toMatchObject({ type: 'heading', attrs: { level: 1 } })
     expect(events.filter((e) => e.kind === 'object').map((e) => (e as { id: string }).id)).toEqual(expect.arrayContaining([created.id, author.id]))
     expect((await call('search', { query: 'spice' })).map((o: { id: string }) => o.id)).toEqual([created.id])
@@ -152,6 +157,20 @@ describe('MCP endpoint', () => {
     // The formula reads the related author, which the query loads for it.
     expect(await titles({ where: [{ field: 'By', operator: 'contains', value: 'herbert' }] })).toEqual(['Dune'])
     await expect(call('update_object', { id: dune.id, properties: { score: 3 } })).rejects.toThrow('computed by a formula')
+  })
+
+  it('sets and clears covers, pins and unpins, and writes a daily note only on demand', async () => {
+    const { call } = await setup()
+    const object = await call('create_object', { type: 'Page', title: 'Covered', coverUrl: 'https://example.com/cover.png' })
+    expect(object).toMatchObject({ coverUrl: 'https://example.com/cover.png', pinned: false })
+    await call('set_pinned', { id: object.id, pinned: true })
+    expect(await call('get_object', { id: object.id })).toMatchObject({ pinned: true, coverUrl: object.coverUrl })
+    await call('set_pinned', { id: object.id, pinned: false })
+    expect(await call('update_object', { id: object.id, coverUrl: null })).toMatchObject({ pinned: false, coverUrl: null })
+    expect(await call('get_daily_note')).toMatchObject({ id: null })
+    await expect(call('write_daily_note', { markdown: '  ' })).rejects.toThrow('daily note text is required')
+    expect(await call('get_daily_note')).toMatchObject({ id: null })
+    expect(await call('write_daily_note', { markdown: 'First entry' })).toMatchObject({ text: { Notes: 'First entry' } })
   })
 
   it('captures into today’s note, lists the inbox and reads daily notes', async () => {
@@ -238,5 +257,103 @@ describe('MCP endpoint', () => {
     // No sessions: nothing to stream on a GET.
     const { secret } = asUser(app, store, { username: 'reader' })
     expect((await app.request('/mcp', { headers: { authorization: `Bearer ${secret}`, accept: 'text/event-stream' } })).status).toBe(405)
+  })
+
+  it('reads and edits whiteboards: elements, arrows by ref, Mermaid, JSON Canvas', async () => {
+    const { store, events, call } = await setup()
+    const page = await call('create_object', { type: 'Page', title: 'Launch plan' })
+    const board = await call('create_object', { type: 'Whiteboard', title: 'Roadmap' })
+    expect((await call('get_object', { id: board.id })).board).toMatch(/^0 elements/)
+    const edited = await call('edit_board', {
+      id: board.id,
+      add: [
+        { ref: 'plan', kind: 'card', object: 'launch plan' },
+        { ref: 'note', kind: 'sticky', text: 'Ask Ana', color: 'pink', x: 400, y: 0 },
+        { kind: 'frame', title: 'Q1', x: -40, y: -40, w: 800, h: 400 },
+      ],
+      arrows: [{ from: 'plan', to: 'note', label: 'then' }],
+    })
+    expect(edited.refs).toEqual({ plan: expect.any(String), note: expect.any(String) })
+    expect(edited.elements.map((e: { kind: string }) => e.kind)).toEqual(['frame', 'card', 'sticky'])
+    expect(edited.elements[1]).toMatchObject({ object: { id: page.id, title: 'Launch plan' } })
+    expect(edited.arrows).toEqual([{ id: expect.any(String), kind: 'arrow', from: edited.refs.plan, to: edited.refs.note, label: 'then' }])
+    // The derived text: the card links the page to the board, the note is searchable.
+    expect(store.backlinks(page.id).map((b) => b.object.id)).toContain(board.id)
+    expect(store.search('s', 'Ana').map((o) => o.id)).toContain(board.id)
+    expect(events.some((e) => e.kind === 'object' && e.id === board.id)).toBe(true)
+
+    const styled = await call('edit_board', { id: board.id, update: [{ id: edited.arrows[0].id, path: 'curved', heads: 'both', dashed: true }] })
+    expect(styled.arrows[0]).toMatchObject({ path: 'curved', heads: 'both', dashed: true })
+    const plain = await call('edit_board', { id: board.id, update: [{ id: edited.arrows[0].id, path: 'straight', heads: 'end', dashed: false }] })
+    expect(plain.arrows[0]).not.toHaveProperty('path')
+    await expect(call('edit_board', { id: board.id, update: [{ id: edited.arrows[0].id, path: 'zigzag' }] })).rejects.toThrow()
+    const viewed = await call('edit_board', { id: board.id, update: [{ id: edited.refs.plan, view: 'compact' }] })
+    expect(viewed.elements.find((e: { id: string }) => e.id === edited.refs.plan).view).toBe('compact')
+    await expect(call('edit_board', { id: board.id, update: [{ id: edited.refs.note, view: 'compact' }] })).resolves.toBeTruthy()
+    const changed = await call('edit_board', { id: board.id, update: [{ id: edited.refs.note, text: 'Ask Ana on Monday', x: 500 }], remove: [edited.refs.plan] })
+    expect(changed.elements.map((e: { kind: string; text?: string }) => e.text ?? e.kind)).toEqual(['frame', 'Ask Ana on Monday'])
+    expect(changed.elements[1].x).toBe(500)
+    expect(changed.arrows).toEqual([])
+
+    const flow = await call('edit_board', { id: board.id, mermaid: 'graph LR\n  A[Idea] --> B{Launch plan?}\n  B -->|yes| C[Launch plan]' })
+    const kinds = flow.elements.map((e: { kind: string }) => e.kind)
+    expect(kinds.filter((k: string) => k === 'shape')).toHaveLength(2)
+    expect(flow.elements.find((e: { kind: string }) => e.kind === 'card').object.id).toBe(page.id)
+    expect(flow.arrows.map((a: { label?: string }) => a.label ?? '')).toEqual(['', 'yes'])
+
+    const canvas = await call('get_board', { id: board.id, format: 'canvas' })
+    expect(canvas.nodes.find((n: { type: string }) => n.type === 'group').label).toBe('Q1')
+    expect(canvas.nodes.some((n: { text?: string }) => n.text === `[Launch plan](https://notes.example/o/${page.id})`)).toBe(true)
+    const copy = await call('create_object', { type: 'Whiteboard', title: 'Copy' })
+    const imported = await call('edit_board', { id: copy.id, canvas })
+    expect(imported.elements.length).toBe(canvas.nodes.length)
+    expect(imported.elements.filter((e: { kind: string }) => e.kind === 'card')[0].object.id).toBe(page.id)
+    expect(imported.arrows).toHaveLength(canvas.edges.length)
+
+    await expect(call('edit_board', { id: page.id, add: [] })).rejects.toThrow('not a whiteboard')
+    await expect(call('edit_board', { id: board.id, add: [{ kind: 'card', object: 'Nothing like this' }] })).rejects.toThrow('no object')
+    await expect(call('edit_board', { id: board.id, arrows: [{ from: 'x', to: 'y' }] })).rejects.toThrow('no element')
+    await expect(call('edit_board', { id: board.id, mermaid: 'pie title Pets' })).rejects.toThrow('flowcharts')
+  })
+
+  it('tags objects, and sets and clears their icon and color', async () => {
+    const { store, call } = await setup()
+    const existing = await call('create_object', { type: 'Tag', title: 'Books' })
+    const tagCount = () => store.listObjects('tag:s').length
+    const before = tagCount()
+
+    // A tag the space has is reused, whatever the case.
+    const book = await call('create_object', { type: 'Book', title: 'Dune', tags: ['books'] })
+    expect(book.tags).toEqual(['Books'])
+    expect(store.getObject(book.id)!.tagIds).toEqual([existing.id])
+    expect(tagCount()).toBe(before)
+
+    // New tags are made, nested ones level by level; adding keeps the tags it had.
+    await call('update_object', { id: book.id, tags: ['sci-fi', 'reading/2026'] })
+    expect((await call('get_object', { id: book.id })).tags).toEqual(['Books', 'sci-fi', 'reading/2026'])
+    expect(tagCount()).toBe(before + 3)
+
+    // Removing takes off only those; a nested tag by path or by its own title.
+    await call('update_object', { id: book.id, tags: ['Books', '2026'], tagsMode: 'remove' })
+    expect((await call('get_object', { id: book.id })).tags).toEqual(['sci-fi'])
+    await call('update_object', { id: book.id, tags: ['Books', 'reading/2026'], tagsMode: 'replace' })
+    expect((await call('get_object', { id: book.id })).tags).toEqual(['Books', 'reading/2026'])
+    expect(tagCount()).toBe(before + 3)
+
+    // Icon and color, on a tag and on any object; null clears the color.
+    await call('update_object', { id: existing.id, icon: 'ph:book-open', color: 'emerald' })
+    let tag = await call('get_object', { id: existing.id })
+    expect([tag.icon, tag.color]).toEqual(['ph:book-open', 'emerald'])
+    await call('update_object', { id: existing.id, color: null })
+    tag = await call('get_object', { id: existing.id })
+    expect([tag.icon, tag.color]).toEqual(['ph:book-open', null])
+    const emoji = await call('update_object', { id: book.id, icon: '📚', color: 'rose' })
+    expect([emoji.icon, emoji.color]).toEqual(['📚', 'rose'])
+    expect(store.getObject(book.id)!.icon).toEqual({ kind: 'emoji', value: '📚' })
+
+    await expect(call('update_object', { id: book.id, icon: 'ph:not-an-icon' })).rejects.toThrow(/unknown icon "ph:not-an-icon".*phosphoricons\.com/)
+    await expect(call('update_object', { id: book.id, icon: 'bookz' })).rejects.toThrow(/unknown icon/)
+    await expect(call('update_object', { id: book.id, icon: 'My books' })).rejects.toThrow(/is not an icon/)
+    await expect(call('update_object', { id: book.id, color: 'mauve' })).rejects.toThrow(/color/)
   })
 })

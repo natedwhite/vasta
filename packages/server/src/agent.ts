@@ -3,9 +3,14 @@
 // (@vasta/core/markdown). Every write goes through the store and the change feed like the HTTP
 // routes, so open apps and synced devices see it. See docs/agents.md.
 import { randomUUID } from 'node:crypto'
-import type { DateValue, Doc, Filter, FilterOperator, FormulaValue, Id, ObjectRecord, ObjectSummary, ObjectType, PropertyDef, PropertyValue, QueryDef, User } from '@vasta/core'
+import type { ColorName, DateValue, Doc, Filter, FilterOperator, FormulaValue, Icon, Id, ObjectRecord, ObjectSummary, ObjectType, PropertyDef, PropertyValue, QueryDef, User } from '@vasta/core'
 import {
   BODY_PROPERTY_ID,
+  COLOR_NAMES,
+  childTag,
+  isColorName,
+  tagPath,
+  tagPathParts,
   addDays,
   applyTemplate,
   defaultTemplate,
@@ -13,6 +18,7 @@ import {
   templateAsks,
   typeTemplates,
   builtinTypeId,
+  writeDailyText,
   CommentError,
   addComment,
   commentsOf,
@@ -65,16 +71,95 @@ import {
   type FoodPortion,
   type Nutrients,
 } from '@vasta/core'
+import {
+  ARROW_HEADS,
+  ARROW_PATHS,
+  CARD_VIEWS,
+  CanvasError,
+  MermaidError,
+  NODE_SIZE,
+  addBoardElements,
+  boardToJsonCanvas,
+  graphToElements,
+  gridBoxes,
+  isAttached,
+  isPlaced,
+  isShapeName,
+  jsonCanvasToElements,
+  parseMermaidFlowchart,
+  readBoard,
+  removeBoardElements,
+  sendToBack,
+  spotAfter,
+  updateBoardElements,
+  type BoardElement,
+  type ArrowHeads,
+  type ArrowPath,
+  type BoardPatch,
+  type CardView,
+  type NewBoardElement,
+} from '@vasta/core'
 import { docToMarkdown, markdownToDoc } from '@vasta/core/markdown'
 import type { NodeStore } from '@vasta/core/node'
-import { checkDoc } from '@vasta/editor-schema/yjs'
+import { Y, checkDoc } from '@vasta/editor-schema/yjs'
 import type { AccountService } from './accounts.ts'
 import type { CaptureService } from './capture.ts'
-import { findOrCreateDailyNote, isValidDay } from './daily.ts'
+import { isValidDay } from './daily.ts'
 import type { ChangeFeed } from './events.ts'
+import { parseIcon } from './icons.ts'
 import { listInbox } from './inbox.ts'
 
 export class AgentError extends Error {}
+
+/** An element an agent adds to a whiteboard; "ref" names it for arrows in the same edit. */
+export interface BoardAddInput {
+  ref?: string
+  kind: 'card' | 'text' | 'sticky' | 'shape' | 'frame'
+  object?: string
+  text?: string
+  shape?: string
+  title?: string
+  color?: string
+  x?: number
+  y?: number
+  w?: number
+  h?: number
+}
+/** An arrow's look as agents give it. */
+export interface ArrowStyleInput {
+  path?: string
+  heads?: string
+  dashed?: boolean
+}
+
+/** An arrow's look checked; defaults ("straight", "end", not dashed) are left out (or cleared, for a change). */
+function arrowStyle(input: ArrowStyleInput, clearing = false): { path?: ArrowPath | undefined; heads?: ArrowHeads | undefined; dashed?: true | undefined } {
+  const out: { path?: ArrowPath | undefined; heads?: ArrowHeads | undefined; dashed?: true | undefined } = {}
+  if (input.path !== undefined) {
+    if (!ARROW_PATHS.includes(input.path as ArrowPath)) throw new AgentError(`unknown arrow path "${input.path}" (${ARROW_PATHS.join(', ')})`)
+    if (input.path !== 'straight' || clearing) out.path = input.path === 'straight' ? undefined : (input.path as ArrowPath)
+  }
+  if (input.heads !== undefined) {
+    if (!ARROW_HEADS.includes(input.heads as ArrowHeads)) throw new AgentError(`unknown arrow heads "${input.heads}" (${ARROW_HEADS.join(', ')})`)
+    if (input.heads !== 'end' || clearing) out.heads = input.heads === 'end' ? undefined : (input.heads as ArrowHeads)
+  }
+  if (input.dashed !== undefined && (input.dashed || clearing)) out.dashed = input.dashed ? true : undefined
+  return out
+}
+
+/** What an agent may change in an element. */
+export interface BoardPatchInput extends ArrowStyleInput {
+  x?: number
+  y?: number
+  w?: number
+  h?: number
+  text?: string
+  title?: string
+  shape?: string
+  label?: string
+  color?: string | null
+  view?: string
+}
 
 export interface AgentOptions {
   store: NodeStore
@@ -193,6 +278,90 @@ export class AgentTools {
   }
 
   /** An object with its properties in words and its text as Markdown. */
+  private coverUrl(value: string): string {
+    const url = URL.parse(value.trim())
+    if (!url || !['http:', 'https:'].includes(url.protocol)) throw new AgentError('coverUrl must be an HTTP(S) URL')
+    return url.href
+  }
+
+  private icon(value: string): Icon {
+    const icon = parseIcon(value)
+    if ('error' in icon) throw new AgentError(icon.error)
+    return icon
+  }
+
+  private color(value: string): ColorName {
+    const color = value.trim().toLowerCase()
+    if (!isColorName(color)) throw new AgentError(`unknown color "${value}": use ${COLOR_NAMES.join(', ')} (null for the default)`)
+    return color
+  }
+
+  /** Icon and color as given (null clears one), onto an object. */
+  private looks(object: ObjectRecord, input: { icon?: string | null; color?: string | null }) {
+    if (input.icon === null) delete object.icon
+    else if (input.icon !== undefined) object.icon = this.icon(input.icon)
+    if (input.color === null) delete object.color
+    else if (input.color !== undefined) object.color = this.color(input.color)
+  }
+
+  /**
+   * The ids of the tags paths name ("recipe/breakfast"), level by level as the app does; missing
+   * levels are made (into `made`, to be saved with the object) unless `made` is not given, when a
+   * path that names no tag is left out.
+   */
+  private tagIds(spaceId: Id, paths: string[], made?: ObjectRecord[]): Id[] {
+    const tagType = this.store.getType(builtinTypeId(spaceId, 'tag'))
+    if (!tagType) throw new AgentError('this space has no tags')
+    const tags: Pick<ObjectRecord, 'id' | 'title' | 'parentId'>[] = [...this.store.listObjects(tagType.id), ...(made ?? [])]
+    const ids: Id[] = []
+    for (const path of paths) {
+      const parts = tagPathParts(path)
+      if (!parts.length) throw new AgentError(`"${path}" is not a tag`)
+      let parentId: Id | undefined
+      for (const title of parts) {
+        let tag = childTag(tags, parentId, title)
+        if (!tag && made) {
+          const created = newObject(tagType, { title, ...(parentId ? { parentId } : {}) }, randomUUID(), this.options.now())
+          made.push(created)
+          tags.push(created)
+          tag = created
+        }
+        parentId = tag?.id
+        if (!tag) break
+      }
+      if (parentId && !ids.includes(parentId)) ids.push(parentId)
+    }
+    return ids
+  }
+
+  /** An object's tags after a change: added, removed or replaced by paths. */
+  private retag(object: ObjectRecord, paths: string[], mode: 'add' | 'remove' | 'replace', made: ObjectRecord[]): Id[] {
+    if (mode === 'replace') return this.tagIds(object.spaceId, paths, made)
+    if (mode === 'add') return [...new Set([...object.tagIds, ...this.tagIds(object.spaceId, paths, made)])]
+    // A one-part path also removes a nested tag of that title ("breakfast" for recipe/breakfast).
+    const titles = new Set(paths.map(tagPathParts).filter((p) => p.length === 1).map((p) => p[0]!.toLowerCase()))
+    const gone = new Set(this.tagIds(object.spaceId, paths))
+    return object.tagIds.filter((id) => !gone.has(id) && !titles.has((this.titleOf(id) ?? '').trim().toLowerCase()))
+  }
+
+  setPinned(id: Id, pinned: boolean) {
+    const object = this.object(id)
+    const space = this.store.getSpace(object.spaceId)!
+    const alreadyPinned = space.sidebar.some((section) => section.items.includes(id))
+    if (pinned && !alreadyPinned) {
+      const section = space.sidebar[0] ?? { id: randomUUID(), name: 'Pinned', items: [] }
+      if (!space.sidebar.length) space.sidebar.push(section)
+      section.items.push(id)
+    } else if (!pinned && alreadyPinned) {
+      for (const section of space.sidebar) section.items = section.items.filter((item) => item !== id)
+    }
+    if (pinned !== alreadyPinned) {
+      this.store.putSpace(space)
+      this.options.feed.emit({ kind: 'space', id: space.id, spaceId: space.id })
+    }
+    return this.getObject(id)
+  }
+
   getObject(id: Id) {
     const object = this.object(id)
     const type = this.store.getType(object.typeId)
@@ -218,35 +387,257 @@ export class AgentTools {
     const backlinks = this.store
       .backlinks(object.id)
       .filter((b) => this.options.accounts.canUse(this.options.user.id, b.object.spaceId) && !b.object.deletedAt)
-      .map((b) => ({ id: b.object.id, title: b.object.title, kind: b.kind }))
+      .map((b) => {
+        // A relation pointing here, under the name its type gives this side ("Wrote").
+        const def = b.kind === 'relation' ? this.store.getType(b.object.typeId)?.properties.find((p) => p.id === b.via) : undefined
+        const as = def?.kind === 'relation' ? def.reverseName?.trim() : undefined
+        return { id: b.object.id, title: b.object.title, kind: b.kind, ...(as ? { as } : {}) }
+      })
     return {
       id: object.id,
       title: object.title,
       type: type?.name ?? '',
       space: this.store.getSpace(object.spaceId)?.name ?? '',
       url: this.url(object.id),
+      coverUrl: object.coverUrl ?? null,
+      icon: object.icon?.value ?? null,
+      color: object.color ?? null,
+      pinned: this.store.getSpace(object.spaceId)?.sidebar.some((section) => section.items.includes(id)) ?? false,
       createdAt: object.createdAt,
       updatedAt: object.updatedAt,
       ...(object.createdBy ? { createdBy: this.personName(object.createdBy) } : {}),
       ...(object.updatedBy ? { updatedBy: this.personName(object.updatedBy) } : {}),
       ...(object.date ? { date: dateText(object.date) } : {}),
-      ...(object.tagIds.length ? { tags: titles(object.tagIds).map((t) => t.title) } : {}),
+      ...(object.tagIds.length ? { tags: object.tagIds.map((id) => tagPath(id, (at) => this.store.getObjectSummaries([at])[0])) } : {}),
       ...(object.media?.url ? { link: object.media.url } : {}),
       ...(Object.keys(properties).length ? { properties } : {}),
       ...(commentsOf(object).length ? { comments: commentsOf(object).map((c) => ({ by: this.personName(c.author), at: c.at, text: c.text })) } : {}),
       ...this.foodFacts(object),
       text,
+      ...(type?.system === 'whiteboard' ? { board: `${readBoard(this.store.loadText(object.id) ?? new Y.Doc()).length} elements; read them with get_board, change them with edit_board` } : {}),
       ...(backlinks.length ? { backlinks } : {}),
     }
   }
 
-  /** A day's note ("YYYY-MM-DD", today by default, in the user's calendar), created if needed. */
+  // Whiteboards ---------------------------------------------------------------------------------
+  // A board's elements live in its Y.Doc (core board.ts); agents read and write them as nodes and
+  // arrows with ids, and the change syncs like an edit made on a device.
+
+  private whiteboard(id: Id) {
+    const object = this.object(id)
+    if (this.store.getType(object.typeId)?.system !== 'whiteboard') throw new AgentError(`"${object.title}" is not a whiteboard`)
+    return object
+  }
+
+  /** An object of the board's space by id, link or exact title. */
+  private boardObject(spaceId: Id, query: string): Id {
+    const link = /\/o\/([^/?#\s]+)/.exec(query)?.[1]
+    const byId = this.store.getObject(link ? decodeURIComponent(link) : query)
+    if (byId && !byId.deletedAt && byId.spaceId === spaceId) return byId.id
+    const found = this.store.search(spaceId, query, 20).find((o) => fold(o.title) === fold(query))
+    if (!found) throw new AgentError(`no object "${query}" in the board's space (search finds objects; use its id)`)
+    return found.id
+  }
+
+  /** What an agent sees of an element (a stroke's ink left out; boxes in board coordinates). */
+  private boardElement(element: BoardElement, all: Map<Id, BoardElement>) {
+    if (element.kind === 'arrow') {
+      const { id, from, to, label, color, relation, path, heads, dashed, mentioned } = element
+      return { id, kind: 'arrow', from, to, ...{ label, color, relation, path, heads, ...(dashed ? { dashed } : {}), ...(mentioned ? { mentioned } : {}) } }
+    }
+    let box = { x: element.x, y: element.y, w: element.w, h: element.h }
+    if (isAttached(element)) {
+      const parent = all.get(element.parent)
+      if (parent && isPlaced(parent)) box = { x: parent.x + element.x * parent.w, y: parent.y + element.y * parent.h, w: element.w * parent.w, h: element.h * parent.h }
+    }
+    const rounded = { x: Math.round(box.x), y: Math.round(box.y), w: Math.round(box.w), h: Math.round(box.h) }
+    const base = { id: element.id, kind: element.kind, ...rounded, ...(element.color ? { color: element.color } : {}) }
+    switch (element.kind) {
+      case 'card':
+        return { ...base, object: { id: element.objectId, title: this.titleOf(element.objectId) ?? '(deleted)' }, ...(element.view ? { view: element.view } : {}) }
+      case 'text':
+      case 'sticky':
+        return { ...base, text: element.text }
+      case 'shape':
+        return { ...base, shape: element.shape, text: element.text }
+      case 'frame':
+        return { ...base, ...(element.title ? { title: element.title } : {}) }
+      case 'stroke':
+        return { ...base, ...(element.parent ? { drawnOn: element.parent } : {}), ...(element.highlight ? { highlight: true } : {}) }
+    }
+  }
+
+  /** A board's elements and arrows; "canvas" gives it as a JSON Canvas (jsoncanvas.org) instead. */
+  getBoard(id: Id, format: 'elements' | 'canvas' = 'elements') {
+    const object = this.whiteboard(id)
+    const elements = readBoard(this.store.loadText(id) ?? new Y.Doc())
+    if (format === 'canvas') return boardToJsonCanvas(elements, (objectId) => (this.titleOf(objectId) !== undefined ? { title: this.titleOf(objectId)!, url: this.url(objectId) } : undefined))
+    const all = new Map(elements.map((e) => [e.id, e]))
+    return {
+      id: object.id,
+      title: object.title,
+      url: this.url(object.id),
+      elements: elements.filter((e) => e.kind !== 'arrow').map((e) => this.boardElement(e, all)),
+      arrows: elements.filter((e) => e.kind === 'arrow').map((e) => this.boardElement(e, all)),
+    }
+  }
+
+  /**
+   * Change a board in one step: add elements (placed where given, else in a grid to the right of
+   * what is there) and arrows between new ("ref") or existing elements, change or remove
+   * elements, add a Mermaid flowchart or a JSON Canvas. Returns the board, and the ids given to refs.
+   */
+  editBoard(input: {
+    id: Id
+    add?: BoardAddInput[]
+    arrows?: ({ from: string; to: string; label?: string; color?: string } & ArrowStyleInput)[]
+    update?: (BoardPatchInput & { id: Id })[]
+    remove?: Id[]
+    mermaid?: string
+    canvas?: unknown
+  }) {
+    const object = this.whiteboard(input.id)
+    const doc = this.store.loadText(object.id) ?? new Y.Doc()
+    const existing = readBoard(doc)
+    const known = new Map(existing.map((e) => [e.id, e]))
+    const refs: Record<string, Id> = {}
+    const color = (value: string | undefined | null) => {
+      if (value === undefined || value === null) return undefined
+      if (!isColorName(value)) throw new AgentError(`unknown color "${value}" (${COLOR_NAMES.join(', ')})`)
+      return value
+    }
+
+    // New elements: their boxes where given, else laid out together after the board's content.
+    const additions: (NewBoardElement & { id: Id })[] = []
+    const unplaced: { element: NewBoardElement & { id: Id }; size: { w: number; h: number } }[] = []
+    for (const item of input.add ?? []) {
+      const id = randomUUID()
+      if (item.ref) {
+        if (refs[item.ref]) throw new AgentError(`ref "${item.ref}" is used twice`)
+        refs[item.ref] = id
+      }
+      const usual = item.kind === 'sticky' ? { w: 180, h: 180 } : item.kind === 'frame' ? { w: 640, h: 420 } : item.kind === 'text' ? { w: 240, h: 40 } : item.kind === 'card' ? { w: 260, h: 150 } : NODE_SIZE
+      const size = { w: Math.max(24, Math.round(item.w ?? usual.w)), h: Math.max(24, Math.round(item.h ?? usual.h)) }
+      const look = color(item.color) ? { color: color(item.color)! } : {}
+      let element: NewBoardElement & { id: Id }
+      const box = { x: Math.round(item.x ?? 0), y: Math.round(item.y ?? 0), ...size }
+      if (item.kind === 'card') {
+        if (!item.object) throw new AgentError('a card needs "object" (an object id or exact title)')
+        element = { id, kind: 'card', objectId: this.boardObject(object.spaceId, item.object), ...box }
+      } else if (item.kind === 'shape') {
+        if (item.shape !== undefined && !isShapeName(item.shape)) throw new AgentError(`unknown shape "${item.shape}"`)
+        element = { id, kind: 'shape', shape: item.shape ?? 'rectangle', text: item.text ?? '', ...box, ...look }
+      } else if (item.kind === 'frame') element = { id, kind: 'frame', ...box, ...look, ...(item.title ? { title: item.title } : {}) }
+      else if (item.kind === 'sticky' || item.kind === 'text') element = { id, kind: item.kind, text: item.text ?? '', ...box, ...look }
+      else throw new AgentError(`unknown kind "${String((item as { kind: unknown }).kind)}" (card, text, sticky, shape, frame)`)
+      additions.push(element)
+      if (item.x === undefined || item.y === undefined) unplaced.push({ element, size })
+    }
+    const spots = gridBoxes(unplaced.map((u) => u.size), spotAfter([...existing, ...additions.filter((a) => !unplaced.some((u) => u.element === a))] as BoardElement[]))
+    unplaced.forEach((u, i) => Object.assign(u.element, spots[i]))
+
+    const resolve = (key: string) => {
+      const id = refs[key] ?? (known.has(key) ? key : undefined)
+      if (!id) throw new AgentError(`no element "${key}" (an id from get_board, or a ref of an added element)`)
+      return id
+    }
+    for (const arrow of input.arrows ?? []) {
+      const from = resolve(arrow.from)
+      const to = resolve(arrow.to)
+      if (from === to) throw new AgentError('an arrow needs two different elements')
+      additions.push({ id: randomUUID(), kind: 'arrow', from, to, ...(arrow.label ? { label: arrow.label } : {}), ...(color(arrow.color) ? { color: color(arrow.color)! } : {}), ...arrowStyle(arrow) })
+    }
+
+    // A flowchart or a canvas goes after everything else.
+    const after = () => spotAfter([...existing, ...additions] as BoardElement[])
+    if (input.mermaid) {
+      try {
+        const graph = parseMermaidFlowchart(input.mermaid)
+        additions.push(...graphToElements(graph, after(), randomUUID, (label) => this.store.search(object.spaceId, label, 10).find((o) => fold(o.title) === fold(label) && o.id !== object.id)?.id))
+      } catch (error) {
+        if (error instanceof MermaidError) throw new AgentError(error.message)
+        throw error
+      }
+    }
+    if (input.canvas !== undefined) {
+      try {
+        const canvas = typeof input.canvas === 'string' ? JSON.parse(input.canvas) : input.canvas
+        const linked = (text: string) => {
+          const match = /^\[[^\]]*\]\(([^)]+)\)$|^(\S+)$/.exec(text)
+          const target = match?.[1] ?? match?.[2]
+          if (!target || !/\/o\//.test(target)) return undefined
+          try {
+            return this.boardObject(object.spaceId, target)
+          } catch {
+            return undefined
+          }
+        }
+        // The canvas's own corner goes where new content goes.
+        const at = after()
+        const nodes = Array.isArray(canvas?.nodes) ? canvas.nodes : []
+        const minX = Math.min(0, ...nodes.map((n: { x?: number }) => n.x ?? 0))
+        const minY = Math.min(0, ...nodes.map((n: { y?: number }) => n.y ?? 0))
+        additions.push(...jsonCanvasToElements(canvas, randomUUID, linked, { x: at.x - minX, y: at.y - minY }))
+      } catch (error) {
+        if (error instanceof CanvasError || error instanceof SyntaxError) throw new AgentError(`canvas: ${error.message}`)
+        throw error
+      }
+    }
+
+    const patches: Record<Id, BoardPatch> = {}
+    for (const change of input.update ?? []) {
+      const element = known.get(change.id)
+      if (!element) throw new AgentError(`no element "${change.id}" on the board`)
+      const patch: BoardPatch = {}
+      if (element.kind === 'arrow') {
+        if (change.label !== undefined) patch.label = change.label || undefined
+        Object.assign(patch, arrowStyle(change, true))
+      } else {
+        for (const key of ['x', 'y', 'w', 'h'] as const) if (change[key] !== undefined && !isAttached(element)) patch[key] = Math.round(change[key])
+        if (change.text !== undefined && 'text' in element) patch.text = change.text
+        if (change.title !== undefined && element.kind === 'frame') patch.title = change.title || undefined
+        if (change.view !== undefined && element.kind === 'card') {
+          if (!CARD_VIEWS.includes(change.view as CardView)) throw new AgentError(`unknown card view "${change.view}" (${CARD_VIEWS.join(', ')})`)
+          patch.view = change.view === 'card' ? undefined : (change.view as CardView)
+        }
+        if (change.shape !== undefined && element.kind === 'shape') {
+          if (!isShapeName(change.shape)) throw new AgentError(`unknown shape "${change.shape}"`)
+          patch.shape = change.shape
+        }
+      }
+      if (change.color !== undefined && element.kind !== 'card') patch.color = change.color === null ? undefined : color(change.color)
+      patches[change.id] = patch
+    }
+    for (const id of input.remove ?? []) if (!known.has(id)) throw new AgentError(`no element "${id}" on the board`)
+
+    doc.transact(() => {
+      const ids = addBoardElements(doc, additions)
+      const frames = additions.filter((a) => a.kind === 'frame').map((a) => a.id)
+      if (frames.length) sendToBack(doc, frames)
+      if (Object.keys(patches).length) updateBoardElements(doc, patches)
+      if (input.remove?.length) removeBoardElements(doc, input.remove)
+      return ids
+    })
+    const saved = this.store.putObject({ ...object, updatedAt: this.options.now() }, undefined, doc)
+    this.changed(saved)
+    return { ...this.getBoard(saved.id), ...(Object.keys(refs).length ? { refs } : {}) }
+  }
+
+  /** A day's note ("YYYY-MM-DD", today by default, in the user's calendar). */
   dailyNote(options: { day?: string; space?: string } = {}) {
     const space = this.space(options.space)
     const day = options.day ?? this.captures.today()
     if (!isValidDay(day)) throw new AgentError('day must be YYYY-MM-DD')
-    const { note, created } = findOrCreateDailyNote(this.store, space.id, day, this.options.now())
-    if (created) this.changed(note)
+    const note = this.store.findObjectOnDay(builtinTypeId(space.id, 'daily-note'), day)
+    return note ? { day, ...this.getObject(note.id) } : { day, id: null }
+  }
+
+  writeDailyNote(markdown: string, spaceQuery?: string, day = this.captures.today()) {
+    if (!isValidDay(day)) throw new AgentError('day must be YYYY-MM-DD')
+    const blocks = this.doc(markdown).content
+    if (!blocks.some((block) => block.type !== 'paragraph' || block.content?.length)) throw new AgentError('daily note text is required')
+    const note = writeDailyText(this.store, this.space(spaceQuery).id, day, this.options.now(), blocks)
+    this.changed(note)
     return { day, ...this.getObject(note.id) }
   }
 
@@ -359,10 +750,10 @@ export class AgentTools {
    * ("blank" for none), its questions answered by `answers`; the given title, properties and
    * Markdown win over the template's (the Markdown goes after its text).
    */
-  createObject(input: { type: string; title?: string; space?: string; properties?: Record<string, unknown>; markdown?: string; template?: string; answers?: Record<string, string> }) {
+  createObject(input: { type: string; coverUrl?: string; title?: string; space?: string; properties?: Record<string, unknown>; markdown?: string; template?: string; answers?: Record<string, string>; tags?: string[]; icon?: string | null; color?: string | null }) {
     const space = this.space(input.space)
     const type = this.type(space.id, input.type)
-    if (type.system === 'daily-note') throw new AgentError('daily notes are made by get_daily_note')
+    if (type.system === 'daily-note') throw new AgentError('daily notes are written by write_daily_note')
     const { props: given, related } = this.props(type, input.properties ?? {})
     const templates = this.store.listTemplates(space.id)
     const wanted = input.template?.trim()
@@ -389,12 +780,15 @@ export class AgentTools {
     if (input.markdown?.trim()) content[field] = { type: 'doc' as const, content: [...(content[field]?.content ?? []), ...this.doc(input.markdown).content] }
     const props = { ...made?.props, ...given }
     const extra = template ? { tagIds: [...template.tagIds], ...(template.icon ? { icon: template.icon } : {}) } : {}
-    const object = newObject(type, { ...extra, title: made?.title ?? input.title?.trim() ?? '', props, content }, randomUUID(), at)
+    const object = newObject(type, { ...extra, ...(input.coverUrl !== undefined ? { coverUrl: this.coverUrl(input.coverUrl) } : {}), title: made?.title ?? input.title?.trim() ?? '', props, content }, randomUUID(), at)
+    this.looks(object, input)
+    const tags: ObjectRecord[] = []
+    if (input.tags?.length) object.tagIds = this.retag(object, input.tags, 'add', tags)
     const stored = this.store.transaction(() => {
-      for (const other of related) this.store.putObject(other)
+      for (const other of [...tags, ...related]) this.store.putObject(other)
       return this.store.putObject(object)
     })
-    for (const other of related) this.changed(other)
+    for (const other of [...tags, ...related]) this.changed(other)
     this.changed(stored)
     return this.getObject(stored.id)
   }
@@ -418,12 +812,29 @@ export class AgentTools {
     return { id: saved.id, comments: commentsOf(saved).length, url: this.url(saved.id) }
   }
 
-  updateObject(input: { id: Id; title?: string; properties?: Record<string, unknown>; markdown?: string; mode?: 'append' | 'prepend' | 'replace'; field?: string }) {
+  updateObject(input: {
+    id: Id
+    coverUrl?: string | null
+    title?: string
+    properties?: Record<string, unknown>
+    markdown?: string
+    mode?: 'append' | 'prepend' | 'replace'
+    field?: string
+    tags?: string[]
+    tagsMode?: 'add' | 'remove' | 'replace'
+    icon?: string | null
+    color?: string | null
+  }) {
     const existing = this.object(input.id)
     const type = this.store.getType(existing.typeId)
     if (!type) throw new AgentError(`no type for ${input.id}`)
     const object: ObjectRecord = { ...existing, props: { ...existing.props }, content: { ...existing.content } }
+    if (input.coverUrl === null) delete object.coverUrl
+    else if (input.coverUrl !== undefined) object.coverUrl = this.coverUrl(input.coverUrl)
     if (input.title !== undefined) object.title = input.title.trim()
+    this.looks(object, input)
+    const tags: ObjectRecord[] = []
+    if (input.tags) object.tagIds = this.retag(object, input.tags, input.tagsMode ?? 'add', tags)
     let related: ObjectRecord[] = []
     if (input.properties) {
       const changes = this.props(type, input.properties)
@@ -448,6 +859,7 @@ export class AgentTools {
       }
     }
     object.updatedAt = this.options.now()
+    related = [...tags, ...related]
     const stored = this.store.transaction(() => {
       for (const other of related) this.store.putObject(other)
       return this.store.putObject(object)
@@ -688,7 +1100,7 @@ export class AgentTools {
   async capture(input: { text: string; space?: string }) {
     const space = this.space(input.space)
     const result = await this.captures.note({ text: input.text, spaceId: space.id, channel: 'agent' })
-    return { dailyNoteId: result.dailyNote.id, url: this.url(result.dailyNote.id), objects: result.objects.map((o) => ({ id: o.id, title: o.title })) }
+    return { dailyNoteId: result.dailyNote!.id, url: this.url(result.dailyNote!.id), objects: result.objects.map((o) => ({ id: o.id, title: o.title })) }
   }
 }
 
@@ -734,13 +1146,13 @@ function describeProperty(def: PropertyDef, typeNames: Map<Id, string>, type: Ob
   const base = { id: def.id, name: def.name, kind: def.kind }
   if (def.kind === 'formula') return { ...base, formula: formulaToNames(def.expression, type, types) }
   if (def.kind === 'select') return { ...base, multiple: def.multiple, options: def.options.map((o) => o.label) }
-  if (def.kind === 'relation') return { ...base, multiple: def.multiple, ...(def.targetTypeIds.length ? { targets: def.targetTypeIds.map((id) => typeNames.get(id) ?? id) } : {}) }
+  if (def.kind === 'relation') return { ...base, multiple: def.multiple, ...(def.targetTypeIds.length ? { targets: def.targetTypeIds.map((id) => typeNames.get(id) ?? id) } : {}), ...(def.reverseName?.trim() ? { reverseName: def.reverseName.trim() } : {}) }
   if (def.kind === 'person') return { ...base, multiple: def.multiple }
   if (def.kind === 'date') return { ...base, ...(def.withTime ? { withTime: true } : {}) }
   return base
 }
 
-function dateText(date: DateValue): string {
+export function dateText(date: DateValue): string {
   const one = (iso: string) => (date.resolution === 'day' ? iso.slice(0, 10) : iso)
   return [one(date.start), date.end ? ` – ${one(date.end)}` : '', date.rrule ? ` (repeats: ${date.rrule})` : ''].join('')
 }
@@ -762,7 +1174,7 @@ function formulaOutput(value: FormulaValue, timeZone: string): unknown {
   }
 }
 
-function valueOf(def: PropertyDef, value: PropertyValue, titles: (ids: Id[]) => { id: Id; title: string }[], personName: (id: Id) => string): unknown {
+export function valueOf(def: PropertyDef, value: PropertyValue, titles: (ids: Id[]) => { id: Id; title: string }[], personName: (id: Id) => string): unknown {
   switch (value.kind) {
     case 'date':
       return dateText(value.value)

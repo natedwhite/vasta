@@ -43,20 +43,24 @@ Code and Codex).
 | `add_comment` | A comment on an object, as the user (@username mentions a member) |
 | `list_types` | A space's types with their properties, select options and object counts |
 | `search` | Full-text search over titles and text |
-| `get_object` | An object: type, properties in words, tags, text fields as Markdown, backlinks |
-| `get_daily_note` | A day's note (today by default, in the user's time zone), made if missing |
+| `get_object` | An object: type, properties in words, tags (nested ones as paths), text fields as Markdown, backlinks, `coverUrl`, `icon`, `color` and `pinned` |
+| `get_daily_note` | A day's note (today by default, in the user's time zone), or `id: null` when it does not exist |
+| `write_daily_note` | Append Markdown to a day’s note, creating it with that text if needed |
 | `query` | Objects of some types, filtered and sorted like a query in the app |
 | `list_inbox` | Items captured lately (Telegram, quick capture, agents…) |
 | `list_templates` | The space's templates (by type, the default marked) and snippets, with the questions they ask |
-| `create_object` | A new object of a type, with properties and Markdown text; it starts from the type's default template, or `template` by name (`"blank"`: none), its questions answered by `answers` |
-| `update_object` | Title, properties (null clears one) and text: append (default), prepend or replace |
-| `capture` | A note into today's daily note, like the quick capture (channel "agent") |
+| `create_object` | A new object of a type, with properties and Markdown text; it starts from the type's default template, or `template` by name (`"blank"`: none), its questions answered by `answers`; `tags`, `icon` and `color` too |
+| `update_object` | Title, properties (null clears one), tags (`tagsMode` add, remove or replace), icon, color and text: append (default), prepend or replace |
+| `set_pinned` | Pin an object in the first sidebar section or unpin it from every section |
+| `capture` | Add a capture to today’s daily note and the inbox (channel "agent") |
 | `list_habits` | The habits: done on a day (today by default; the amount for daily goals), weekdays, streaks, rates, the last days |
 | `log_habit` | Mark a habit done or not on a day, or set or add to its amount toward a daily goal |
 | `log_food` | Log what was eaten (a space that tracks food): a line as after `/food` ([capture.md](capture.md#food); an item with kcal, "muffin ~350 kcal 12 g protein", is logged by its numbers, without a food, e.g. an estimate from a photo of a plate), or one `food` with an `amount` and `meal`; `day` for another day |
 | `nutrition_day` | A day's meals with their entries (ids), totals against the goal, whether it counts, the week's budget |
 | `delete_food_entry` | Take an entry off a day |
 | `save_food` | Make or fill in a food: nutrients per `per` grams as on its label (kept per 100 g), brand, portions |
+| `get_board` | A whiteboard's elements (cards with their object, text, sticky notes, shapes, frames, pen strokes without their ink) with boxes in board coordinates, and its arrows; `format: "canvas"` gives a JSON Canvas instead |
+| `edit_board` | Change a whiteboard in one step: `add` elements (`ref` names one for `arrows` in the same call; without `x`/`y` they are laid out in a grid to the right of the board), `arrows`, `update` (move, resize, recolor, retext, retitle, reshape, relabel, a card's `view`, an arrow's `path`, `heads`, `dashed`; arrows take those when added too), `remove`, `mermaid` (a flowchart laid out as shapes and arrows, nodes named like objects becoming their cards), `canvas` (a JSON Canvas to add) |
 
 Without `space`, tools use the user's capture space; a space can be named by id or name. Types are
 named by name, plural or built-in key (`page`, `task`…), properties by name, select values by
@@ -73,8 +77,59 @@ recipe its ingredients and what it comes to; so an agent can log a plate from a 
 `log_food`, or fill a food from its label with `save_food`, without the app holding LLM keys. Results are
 JSON; objects carry a `url` to open them in the app (`VASTA_WEB_URL`, else the request's address).
 
+A whiteboard is made with `create_object` (type "Whiteboard"); its elements are not in
+`get_object`'s text but in `get_board` ([whiteboards.md](whiteboards.md)). A card names its
+object by id, link or exact title in the board's space.
+
 Writes go through the store like the app's own saves: the change feed tells open pages, and the
 rich text is written to the object's Yjs document, so devices merge it with their own edits.
+
+### Covers and pins
+
+Pass an HTTP(S) image URL as `coverUrl` to `create_object` or `update_object`. Pass
+`coverUrl: null` to `update_object` to clear it. Use `get_object` to inspect the current cover
+and pin status.
+
+| MCP tool | Example input |
+| --- | --- |
+| `create_object` | `{"type":"Page","title":"Trip","coverUrl":"https://example.com/trip.jpg"}` |
+| `update_object` | `{"id":"page-id","coverUrl":"https://example.com/new.jpg"}` |
+| `update_object` | `{"id":"page-id","coverUrl":null}` |
+| `set_pinned` | `{"id":"page-id","pinned":true}` |
+| `set_pinned` | `{"id":"page-id","pinned":false}` |
+| `get_object` | `{"id":"page-id"}` |
+
+The app uploads a local cover through the existing image upload flow. It stores the image as
+a media object and sets the cover to its authenticated `/media/<key>` URL. CLI and MCP cover
+writes currently accept remote URLs. Local-file support would need an authenticated upload
+operation that receives the bytes. An MCP server cannot resolve paths on the client's device.
+
+### Tags, icons and colors
+
+`create_object` and `update_object` take `tags`, a list of tag titles. A path like
+`recipe/breakfast` names a nested tag, level by level as the app does, and tags the space does not
+have yet are made. On `update_object`, `tagsMode` says what the list does: `add` (the default, so
+an update never drops tags unless asked), `remove`, or `replace`. Removing by a one-part name also
+takes off a nested tag of that title. `get_object` lists tags by path.
+
+`icon` is an emoji or a [Phosphor](https://phosphoricons.com) icon as `ph:<name>` (`ph:star`,
+`ph:book-open`; weights as `ph:star-fill`, `-bold`, `-duotone`, `-light`, `-thin`), the set the
+app's icon picker offers; unknown names are refused with a pointer to the list. `color` is one of
+the app's palette: gray, red, orange, amber, yellow, lime, green, emerald, teal, cyan, sky, blue,
+indigo, violet, purple, fuchsia, pink, rose. A tag's color colors its chips (and its sub-tags'
+without one). `null` removes either.
+
+| MCP tool | Example input |
+| --- | --- |
+| `create_object` | `{"type":"Book","title":"Dune","tags":["books","reading/2026"],"icon":"📚"}` |
+| `update_object` | `{"id":"book-id","tags":["sci-fi"]}` |
+| `update_object` | `{"id":"book-id","tags":["books"],"tagsMode":"remove"}` |
+| `update_object` | `{"id":"tag-id","icon":"ph:book-open","color":"emerald"}` |
+| `update_object` | `{"id":"tag-id","color":null}` |
+
+Read a daily note with `get_daily_note` using `{"day":"2026-11-03"}`. To write the first
+entry or append to an existing note, call `write_daily_note` with
+`{"day":"2026-11-03","markdown":"## Morning\n\nA first entry."}`. Omit the date to use today.
 
 ### Markdown
 
@@ -82,7 +137,7 @@ Text goes in and out as Markdown (`packages/core/src/markdown.ts`): paragraphs, 
 to-dos (`- [ ]`, `- [x]`), quotes, code blocks, rules, tables, line breaks; bold, italic, strike,
 code, `==highlight==` and links. Vasta's own pieces:
 
-- a mention: `[@Title](vasta://o/<id>)`; of one block: `[@Title › its text](vasta://o/<id>#b-<block>)`
+- a mention: `[Title](vasta://o/<id>)` or `[@Title](vasta://o/<id>)`, including in headings and table cells; of one block: `[@Title › its text](vasta://o/<id>#b-<block>)`
 - an embedded object (a card, an image): `![Title](vasta://o/<id>)`; one block of it (read-only,
   following the original): `![Title](vasta://o/<id>#b-<block>)`
 - a callout: a quote that starts with `[!NOTE]`
@@ -113,6 +168,17 @@ vasta new Task "Login breaks" --template Bug --answer "Who saw it?=Lena"
 vasta templates                            # templates and snippets, with their questions
 echo "- read chapter 3" | vasta append today
 vasta set <id> status=done --title "Done it"
+vasta new Page Trip --cover-url https://example.com/trip.jpg
+vasta set page-id --cover-url https://example.com/new.jpg
+vasta set page-id --remove-cover
+vasta new Book Dune --tag books --tag reading/2026 --icon 📚
+vasta set book-id --tag sci-fi --remove-tag books   # add and remove tags
+vasta set book-id --set-tags books,sci-fi           # exactly these tags
+vasta set tag-id --icon ph:book-open --color emerald
+vasta set tag-id --color none                       # back to the default color
+vasta pin page-id
+vasta unpin page-id
+vasta show page-id                         # current cover and pin status
 vasta capture "call the dentist"
 vasta inbox --days 3
 vasta habits                               # ✓ done today, ○ not yet, – day off; streaks
@@ -121,6 +187,10 @@ vasta habit water +1                       # one more toward a daily goal ("5" s
 vasta food 2 slices of bread at breakfast  # log food; --day for another day
 vasta nutrition                            # today's meals, totals against the goal, the week
 vasta query --type Task --where "status is To do" --sort due
+vasta board <id>                           # a whiteboard's elements and arrows
+vasta board <id> --canvas > plan.canvas    # as a JSON Canvas file (Obsidian opens it)
+echo 'graph LR; A[Idea] --> B[Plan]' | vasta board <id> --mermaid
+vasta board <id> --import < plan.canvas    # add a JSON Canvas to a board
 vasta tool get_object '{"id":"…"}'         # any tool, JSON in and out
 ```
 

@@ -1,4 +1,5 @@
-import { foodCommand, lineAsks, type FoodLineAnswer, type Icon, type Id, type ObjectRecord, type ObjectSummary, type ObjectType, type Space, type TemplateAsk } from '@vasta/core'
+import { childTag, newId, tagPathParts } from '@vasta/core'
+import { foodCommand, lineAsks, type FoodLineAnswer, type Icon, type Id, type ObjectRecord, type ObjectSummary, type ObjectType, type PropertyValue, type SelectOption, type Space, type TemplateAsk } from '@vasta/core'
 import type { CaptureAnswer } from '@vasta/core/client'
 import { api } from './api.ts'
 import { clone } from './clone.ts'
@@ -18,6 +19,49 @@ export async function createObject(typeId: Id, data: Partial<ObjectRecord> = {},
   void refreshCounts()
   if (open) await router.push({ path: `/o/${object.id}`, query: { new: '1' } })
   return object
+}
+
+/**
+ * Sets one property of an object and saves it, as a table cell does. The fetched copy goes along
+ * as the base, so a field changed elsewhere meanwhile is kept and only this one is written.
+ */
+export async function setProperty(id: Id, propertyId: Id, value: PropertyValue | undefined): Promise<ObjectRecord> {
+  const object = await api.object(id)
+  const base = clone(object)
+  if (value) object.props[propertyId] = value
+  else delete object.props[propertyId]
+  const saved = await api.saveObject(object, base)
+  primeFromObject(saved)
+  return saved
+}
+
+/** Saves of each type in flight: they go one after another, each sending the latest copy. */
+const typeSaves = new Map<Id, Promise<void>>()
+
+/**
+ * Adds an option to a select property of a type (one made from a value editor) and saves the type.
+ * The option shows at once, and one added before this save answers builds on it, so options
+ * created in quick succession all stay.
+ */
+export async function addSelectOption(type: ObjectType, propertyId: Id, option: SelectOption) {
+  const next = clone(typesById.value.get(type.id) ?? type)
+  const target = next.properties.find((p) => p.id === propertyId)
+  if (target?.kind !== 'select') return
+  target.options.push(option)
+  replaceType(next)
+  const save: Promise<void> = (typeSaves.get(type.id) ?? Promise.resolve())
+    .catch(() => {}) // an earlier save that failed does not stop this one
+    .then(async () => {
+      const saved = await api.saveType(clone(typesById.value.get(type.id) ?? next))
+      // A later save sends a newer copy; until it answers, the local one is the fullest.
+      if (typeSaves.get(type.id) === save) replaceType(saved)
+    })
+  typeSaves.set(type.id, save)
+  try {
+    await save
+  } finally {
+    if (typeSaves.get(type.id) === save) typeSaves.delete(type.id)
+  }
 }
 
 /** "YYYY-MM-DD" of a date in this device's calendar. */
@@ -87,16 +131,16 @@ export async function captureText(text: string, channel: string, answers?: Recor
     return { space, answer: { dailyNoteId: food.dailyNoteId ?? '', blockId: '', summary: food.summary }, food }
   }
   const typed = text.startsWith('/') ? typedLine(await typesOf(space), text) : undefined
-  const answer = await api.capture(space.id, typed ? typed.rest : text, channel, dayKey(), typed?.type.id, typed ? answers : undefined)
-  return { space, answer, ...(typed && answer.objects?.[0] ? { made: answer.objects[0].id } : {}) }
+  const answer = await api.capture(space.id, typed ? typed.rest : text, channel, dayKey(), typed?.type.id, typed ? answers : undefined, channel === 'desktop' ? { daily: ui.captureDaily, inbox: ui.captureInbox } : undefined)
+  return { space, answer, ...((typed || !answer.dailyNoteId) && answer.objects?.[0] ? { made: answer.objects[0].id } : {}) }
 }
 
 /** Open what a capture made (Ctrl+Enter): the object of a "/Type …" line, else the day's note, in the capture space. */
 export async function openCapture(space: Space, answer: CaptureAnswer, made?: Id) {
-  const id = made ?? answer.dailyNoteId
+  const id = made ?? (answer.dailyNoteId || answer.sourceId)
   if (!id) return
   if (workspace.space?.id !== space.id) await loadWorkspace(space.id)
-  await router.push(`/o/${id}`)
+  await router.push({ path: `/o/${id}`, ...(id === answer.sourceId ? { query: { capture: answer.blockId } } : {}) })
 }
 
 /**
@@ -105,25 +149,21 @@ export async function openCapture(space: Space, answer: CaptureAnswer, made?: Id
  */
 export async function tagFromPath(path: string): Promise<ObjectRecord | ObjectSummary | undefined> {
   const tagType = systemType('tag')
-  const parts = path.split('/').map((part) => part.trim().replace(/^#/, '')).filter(Boolean)
+  const parts = tagPathParts(path)
   if (!tagType || !parts.length) return undefined
   const tags = await api.objectsOfType(tagType.id)
   let parent: ObjectRecord | ObjectSummary | undefined
   for (const title of parts) {
     const parentId: Id | undefined = parent?.id
-    const existing: ObjectRecord | ObjectSummary | undefined = tags.find((t) => (t.parentId ?? undefined) === parentId && t.title.trim().toLowerCase() === title.toLowerCase())
+    const existing: ObjectRecord | ObjectSummary | undefined = childTag(tags, parentId, title)
     parent = existing ?? (await createObject(tagType.id, { title, ...(parentId ? { parentId } : {}) }, false))
   }
   return parent
 }
 
-/** Open the daily note of a day; the server creates it the first time. */
+/** Open the day without writing a daily note. */
 export async function openDay(day: string, replace = false) {
-  if (!workspace.space) return
-  const note = await api.dailyNote(workspace.space.id, day)
-  primeFromObject(note)
-  void refreshCounts()
-  return replace ? router.replace(`/o/${note.id}`) : router.push(`/o/${note.id}`)
+  return replace ? router.replace(todayRoute(day)) : router.push(todayRoute(day))
 }
 
 /** Today: the calendar's day view, with today's daily note in it. */
@@ -281,7 +321,7 @@ export function pinToSidebar(id: Id, sectionId?: string) {
   return updateSidebar((space) => {
     let section = sectionId ? space.sidebar.find((s) => s.id === sectionId) : space.sidebar[0]
     if (!section) {
-      section = { id: crypto.randomUUID(), name: PINNED, items: [] }
+      section = { id: newId(), name: PINNED, items: [] }
       space.sidebar.unshift(section)
     }
     if (!section.items.includes(id)) section.items.push(id)
@@ -385,7 +425,7 @@ export async function newSectionFlow(withItem?: Id) {
   const name = await promptDialog({ title: 'New sidebar section', placeholder: 'Section name', confirmLabel: 'Create' })
   if (!name) return
   await updateSidebar((space) => {
-    space.sidebar.push({ id: crypto.randomUUID(), name, items: withItem ? [withItem] : [] })
+    space.sidebar.push({ id: newId(), name, items: withItem ? [withItem] : [] })
   })
 }
 

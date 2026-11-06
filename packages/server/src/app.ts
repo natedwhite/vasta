@@ -40,6 +40,8 @@ import {
   setNutritionEnabled,
   setSprints,
   SprintError,
+  textToBlocks,
+  writeDailyText,
 } from '@vasta/core'
 import { OccurrenceError, calendarObjects, changeOccurrence, compareEntries, dayReferences, objectEntries, type OccurrenceEdit } from '@vasta/core/calendar'
 import { checkMediaKey, mediaKey, RangeNotSatisfiableError, type MediaStore } from '@vasta/core/media'
@@ -59,6 +61,7 @@ import { handleMcp } from './mcp.ts'
 import { NotificationService } from './notifications.ts'
 import { openApi } from './openapi.ts'
 import { MAX_PULL_LIMIT, MAX_PUSH_CHANGES, MAX_TEXT_OBJECTS, pull, push, textUpdates, type SyncChange } from './sync.ts'
+import { buildExport, zipExport } from './export.ts'
 import { ImportError, MAX_IMPORT_BYTES, Migration, importRows, type ImportBatch, type MigrationInput } from './transfer.ts'
 import { WeblinkError, WeblinkService } from './weblinks.ts'
 import { createOidcRouter } from './oidc.ts'
@@ -793,11 +796,18 @@ export function createApp({ store, media, now = () => new Date().toISOString(), 
   })
 
   /** Open a daily note by date ("YYYY-MM-DD", in the client's calendar), creating it on first use. */
-  api.post('/spaces/:id/daily-notes/:day', (c) => {
+  api.post('/spaces/:id/daily-notes/:day', async (c) => {
     const space = store.getSpace(c.req.param('id'))
     const day = c.req.param('day')
     if (!space) return c.json({ error: 'not found' }, 404)
     if (!isValidDay(day)) return c.json({ error: 'day must be YYYY-MM-DD' }, 400)
+    const body = await c.req.json<{ text?: string }>().catch(() => null)
+    if (body?.text !== undefined) {
+      if (typeof body.text !== 'string' || !body.text.trim()) return c.json({ error: 'daily note text is required' }, 400)
+      const note = writeDailyText(store, space.id, day, now(), textToBlocks(body.text))
+      changed(note)
+      return c.json(note)
+    }
     const { note, created } = findOrCreateDailyNote(store, space.id, day, now())
     if (created) changed(note)
     return c.json(note, created ? 201 : 200)
@@ -873,17 +883,18 @@ export function createApp({ store, media, now = () => new Date().toISOString(), 
   api.post('/spaces/:id/captures', async (c) => {
     const space = store.getSpace(c.req.param('id'))
     if (!space) return c.json({ error: 'not found' }, 404)
-    type Body = { text?: string; channel?: string; typeId?: string; answers?: unknown }
+    type Body = { text?: string; channel?: string; typeId?: string; answers?: unknown; destinations?: { daily?: boolean; inbox?: boolean } }
     const body = await c.req.json<Body>().catch(() => ({}) as Body)
     const channel = /^[a-z]{1,20}$/.test(body.channel ?? '') ? body.channel! : 'app'
     const text = String(body.text ?? '')
-    if (body.typeId === undefined) return respond(c, () => capturesOf(c).note({ spaceId: space.id, text, channel }))
+    const options = channel === 'desktop' ? { destinations: { daily: body.destinations?.daily === true, inbox: body.destinations?.inbox === true } } : {}
+    if (body.typeId === undefined) return respond(c, () => capturesOf(c).note({ spaceId: space.id, text, channel, ...options }))
     const type = store.getType(String(body.typeId))
     if (!type || type.spaceId !== space.id) return c.json({ error: 'unknown type' }, 400)
     const [line = '', ...rest] = text.split('\n')
     // Answers to the template's questions (the quick capture asks them): labels and texts only.
     const answers = body.answers && typeof body.answers === 'object' ? Object.fromEntries(Object.entries(body.answers).filter((e): e is [string, string] => typeof e[1] === 'string')) : undefined
-    return respond(c, () => capturesOf(c).object({ spaceId: space.id, type: type.id, line, text: rest.join('\n'), channel, ...(answers ? { answers } : {}) }))
+    return respond(c, () => capturesOf(c).object({ spaceId: space.id, type: type.id, line, text: rest.join('\n'), channel, ...options, ...(answers ? { answers } : {}) }))
   })
 
   /** A line of food, as after /food: `{ text }` (core's logFoodLine, in the user's time zone). */
@@ -916,6 +927,22 @@ export function createApp({ store, media, now = () => new Date().toISOString(), 
       if (error instanceof WeblinkError) return c.json({ error: error.message }, 400)
       throw error
     }
+  })
+
+  // Export -------------------------------------------------------------------
+  /**
+   * The whole space to take away, as a ZIP (export.ts, docs/export.md): Markdown per object,
+   * vasta.json with everything, and the media files (`?media=0` leaves them out).
+   */
+  api.get('/spaces/:id/export', (c) => {
+    const space = store.getSpace(c.req.param('id'))
+    if (!space) return c.json({ error: 'not found' }, 404)
+    const exported = buildExport(store, space.id, { now: now(), media: c.req.query('media') !== '0' })
+    return c.body(zipExport(exported, media), 200, {
+      'content-type': 'application/zip',
+      'content-disposition': `attachment; filename="${exported.name.replace(/[^\x20-\x7e]|"/g, '_')}"; filename*=UTF-8''${encodeURIComponent(exported.name)}`,
+      'cache-control': 'no-store',
+    })
   })
 
   // Files --------------------------------------------------------------------
@@ -1421,7 +1448,8 @@ export function createApp({ store, media, now = () => new Date().toISOString(), 
       const result = await run()
       return c.json(
         {
-          dailyNoteId: result.dailyNote.id,
+          dailyNoteId: result.dailyNote?.id ?? '',
+          ...(result.sourceId ? { sourceId: result.sourceId } : {}),
           blockId: result.blockId,
           objects: result.objects.map((o) => ({ id: o.id, typeId: o.typeId, title: o.title })),
           ...(result.summary ? { summary: result.summary } : {}),
@@ -1525,6 +1553,10 @@ export function createApp({ store, media, now = () => new Date().toISOString(), 
     } catch {
       return c.json({ error: 'invalid key' }, 400)
     }
+    // Only for members of a space that uses the file; anyone else gets the same 404 as a file that
+    // does not exist.
+    const user = userOf(c)
+    if (!store.mediaSpaces(key).some((spaceId) => users.canUse(user.id, spaceId))) return c.json({ error: 'not found' }, 404)
     let file
     try {
       file = await media.get(key, c.req.header('range'))

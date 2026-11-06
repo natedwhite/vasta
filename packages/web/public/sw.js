@@ -14,7 +14,7 @@ const API = 'vasta-api'
 const MAX_ASSETS = 40
 
 self.addEventListener('install', (event) => {
-  event.waitUntil(caches.open(SHELL).then((cache) => cache.addAll(['/', '/manifest.webmanifest', '/icon.svg'])).then(() => self.skipWaiting()))
+  event.waitUntil(caches.open(SHELL).then((cache) => cache.addAll(['/', '/manifest.webmanifest', '/icon.svg', '/favicon.svg'])).then(() => self.skipWaiting()))
 })
 
 self.addEventListener('activate', (event) => {
@@ -65,5 +65,7 @@ self.addEventListener('fetch', (event) => {
   if (url.pathname.startsWith('/assets/')) return event.respondWith(cacheFirst(request, ASSETS, MAX_ASSETS))
   if (url.pathname.startsWith('/media/')) return event.respondWith(cacheFirst(request, MEDIA))
   if (url.pathname === '/api/events' || url.pathname.startsWith('/api/auth/login') || url.pathname.startsWith('/api/sync/')) return
+  // A space's export (a ZIP of everything) goes straight to the network, never into the cache.
+  if (/^\/api\/spaces\/[^/]+\/export$/.test(url.pathname)) return
   if (url.pathname.startsWith('/api/')) return event.respondWith(networkFirst(request, API))
 })

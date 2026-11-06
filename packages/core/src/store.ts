@@ -1,7 +1,8 @@
 // The SQLite store of spaces, types, objects and subscribed calendars, with sync revisions and the
 // objects' Yjs documents. It runs on any SQLite through `SqlDatabase`: node:sqlite on the server
 // (`NodeStore`, which adds accounts), sqlite-wasm in the browser.
-import { Y, loadYDoc, markDeletions, newBlockId, normalizeDoc, readContent, writeContent, type JsonDoc } from '@vasta/editor-schema/yjs'
+import { Y, loadYDoc, markDeletions, newBlockId, normalizeDoc, writeContent, type JsonDoc } from '@vasta/editor-schema/yjs'
+import { contentOfText } from './board.ts'
 import { ACTIVITY_MERGE_MS, DEFAULT_ACTIVITY_RETENTION_DAYS, activityChanges, type ActivityEntry } from './activity.ts'
 import { blockIds, nodeAt, setBlockId } from './blocks.ts'
 import { WriteRefused, commentAuthorshipProblem } from './comments.ts'
@@ -303,7 +304,7 @@ export class Store {
           const content = normalizeContent(parse<ObjectRecord['content']>(row.content) ?? {})
           writeContent(ydoc, content as Record<string, JsonDoc>)
           const clock = Object.fromEntries(Object.entries(parse<FieldClock>(row.clock) ?? {}).filter(([name]) => !name.startsWith('content.')))
-          update.run(JSON.stringify(readContent(ydoc)), JSON.stringify(clock), id)
+          update.run(JSON.stringify(contentOfText(ydoc)), JSON.stringify(clock), id)
           this.saveText(id, ydoc, row.rev as number | null)
         } catch (error) {
           failed.push(`${id}: ${(error as Error).message}`)
@@ -735,7 +736,7 @@ export class Store {
 
   /** The rich text after a write, and the object's Y.Doc when the text changed (to save). */
   private textAfter(id: Id, content: ObjectRecord['content'], before: ObjectRecord['content'] | undefined, text?: Y.Doc) {
-    if (text) return { content: readContent(text) as ObjectRecord['content'], ydoc: text }
+    if (text) return { content: contentOfText(text), ydoc: text }
     const next = normalizeContent(content)
     const fields = [...new Set([...Object.keys(next), ...Object.keys(before ?? {})])]
     const changed = fields.filter((field) => canonicalJson(next[field] ?? null) !== canonicalJson(before?.[field] ?? null))
@@ -743,7 +744,7 @@ export class Store {
     if (hasText && !changed.length) return { content: next }
     const ydoc = (hasText && this.loadText(id)) || new Y.Doc()
     writeContent(ydoc, next as Record<string, JsonDoc>, undefined, hasText ? changed : undefined)
-    return { content: readContent(ydoc) as ObjectRecord['content'], ydoc }
+    return { content: contentOfText(ydoc), ydoc }
   }
 
   /** The Yjs document holding an object's rich text. */
@@ -771,6 +772,22 @@ export class Store {
       .prepare('INSERT OR REPLACE INTO object_docs (object_id, ydoc, vector, rev) VALUES (?, ?, ?, ?)')
       .run(id, Y.encodeStateAsUpdate(ydoc), Y.encodeStateVector(ydoc), rev)
     this.textSaved(id)
+  }
+
+  /**
+   * The spaces whose objects use a media file: as the object's file, a weblink's preview picture, or
+   * a cover (`/media/<key>`). Trashed objects count (they can come back). Each part of the query
+   * has its own index.
+   */
+  mediaSpaces(key: string): Id[] {
+    const rows = this.db
+      .prepare(
+        `SELECT space_id FROM objects WHERE media IS NOT NULL AND json_extract(media, '$.file.key') = ?
+         UNION SELECT space_id FROM objects WHERE media IS NOT NULL AND json_extract(media, '$.previewImageFile.key') = ?
+         UNION SELECT space_id FROM objects WHERE cover_url IS NOT NULL AND cover_url IN (?, ?)`
+      )
+      .all(key, key, `/media/${key}`, `/media/${encodeURIComponent(key)}`) as Row[]
+    return rows.map((row) => row.space_id as Id)
   }
 
   /** The Yjs state vectors of objects' rich text (what a client compares with its own to see if it lags). */

@@ -5,6 +5,14 @@ import type { Doc, DocNode } from '../src/model.ts'
 const text = (value: string, marks?: DocNode['marks']): DocNode => ({ type: 'text', text: value, ...(marks ? { marks } : {}) })
 const paragraph = (...content: DocNode[]): DocNode => ({ type: 'paragraph', content })
 
+it('keeps object references in headings and table cells and preserves editable task items', () => {
+  const doc = markdownToDoc('# [Target](vasta://o/target)\n\n| Related |\n| --- |\n| ![Target](vasta://o/target) |\n\n- [ ] Open\n- [x] Done')
+  const mention = { type: 'mention', attrs: { objectId: 'target', label: 'Target' } }
+  expect(doc.content[0]?.content).toEqual([mention])
+  expect(doc.content[1]?.content?.[1]?.content?.[0]?.content?.[0]?.content).toEqual([mention])
+  expect(doc.content[2]?.content?.map((item) => [item.type, item.attrs?.checked])).toEqual([['taskItem', false], ['taskItem', true]])
+})
+
 const sample = `# Title
 
 Some **bold**, _italic_, ~~gone~~, \`code\`, ==marked== and a [link](https://example.com/a_b).\\
@@ -115,6 +123,23 @@ describe('markdown', () => {
     const markdown = docToMarkdown(doc, { titleOf: () => 'Architecture' })
     expect(markdown).toBe('![Architecture](vasta://o/wb1#s-scene-42)')
     expect(markdownToDoc(markdown).content).toEqual(doc.content)
+  })
+
+  it('keeps a mention whose title has Markdown characters the same over repeated rewrites', () => {
+    const doc: Doc = {
+      type: 'doc',
+      content: [
+        paragraph(
+          { type: 'mention', attrs: { objectId: 'o1', label: 'LOG_REVIEW [2026] a\\b' } },
+          text(' and '),
+          { type: 'mention', attrs: { objectId: 'o2', label: 'FIX_PLAN', blockId: 'abc123', blockLabel: 'Step_1' } }
+        ),
+      ],
+    }
+    const first = docToMarkdown(doc)
+    expect(first).toBe('[@LOG\\_REVIEW \\[2026\\] a\\\\b](vasta://o/o1) and [@FIX\\_PLAN › Step\\_1](vasta://o/o2#b-abc123)')
+    expect(markdownToDoc(first).content).toEqual(doc.content)
+    expect(docToMarkdown(markdownToDoc(docToMarkdown(markdownToDoc(first))))).toBe(first)
   })
 
   it('keeps a Mermaid diagram as a mermaid code block, so agents read and write diagrams', () => {

@@ -4,7 +4,9 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { WebStandardStreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js'
 import { z } from 'zod'
+import { COLOR_NAMES } from '@vasta/core'
 import { AgentError, type AgentTools } from './agent.ts'
+import { ICON_HELP } from './icons.ts'
 
 const INSTRUCTIONS = `Vasta is a notes app: everything is an object (a page, a daily note, a task, a book…) of a type,
 with properties and rich text, in spaces. Text comes and goes as Markdown; [@Title](vasta://o/<id>)
@@ -21,13 +23,19 @@ space: set them by username or name, "me" for the user; get_object shows who mad
 and who changed it last (createdBy, updatedBy). A space with sprints has a Sprint type (dates,
 goal) and tasks a Sprint field: set it by the sprint's title, or "current" for the one under way.
 Types may have templates (list_templates): create_object starts from a type's default template,
-or the one named by "template", with its questions answered by "answers".`
+or the one named by "template", with its questions answered by "answers". Whiteboards (type
+"Whiteboard") hold cards of objects, text, sticky notes, shapes, frames and arrows: read one with
+get_board, change it with edit_board (a Mermaid flowchart becomes a board there too).`
 
 const space = z.string().optional().describe('Space id or name; the default space when omitted')
 const properties = z
   .record(z.string(), z.union([z.string(), z.number(), z.boolean(), z.array(z.string()), z.null()]))
   .optional()
   .describe('Values by property name: text, numbers, true/false, dates ("2026-10-25", "2026-10-25T15:00:00Z", "friday 15h"), option labels, related objects by title, people by username or name ("me": the user) (a list for several). null clears one.')
+
+const tags = z.array(z.string()).optional().describe('Tag titles; a path like "recipe/breakfast" names a nested tag. Tags the space does not have yet are created.')
+const icon = z.string().nullable().optional().describe(`Its icon: ${ICON_HELP}. null removes it.`)
+const color = z.enum(COLOR_NAMES).nullable().optional().describe(`Its color (a tag's chips): ${COLOR_NAMES.join(', ')}. null goes back to the default.`)
 
 type Result = { content: { type: 'text'; text: string }[]; isError?: boolean }
 
@@ -172,7 +180,7 @@ export function mcpServer(tools: AgentTools, version: string): McpServer {
     'get_object',
     {
       title: 'Get object',
-      description: "An object: type, properties, tags, its text fields as Markdown, and what links to it (backlinks). The id is in vasta://o/<id> links and in other tools' results.",
+      description: "An object: type, icon, color, properties, tags (nested ones as paths, \"recipe/breakfast\"), its text fields as Markdown, and what links to it (backlinks). The id is in vasta://o/<id> links and in other tools' results.",
       inputSchema: { id: z.string() },
       annotations: READ,
     },
@@ -183,11 +191,22 @@ export function mcpServer(tools: AgentTools, version: string): McpServer {
     'get_daily_note',
     {
       title: 'Get daily note',
-      description: "A day's note (today by default, in the user's time zone), created if it does not exist yet. Captured items are in its text.",
+      description: "A day's note (today by default, in the user's time zone), with id null when the note has not been started.",
       inputSchema: { day: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional().describe('YYYY-MM-DD'), space },
-      annotations: { ...READ, readOnlyHint: false },
+      annotations: READ,
     },
     ({ day, space }) => run(() => tools.dailyNote({ ...(day ? { day } : {}), ...(space ? { space } : {}) }))
+  )
+
+  server.registerTool(
+    'write_daily_note',
+    {
+      title: 'Write daily note',
+      description: "Append Markdown to a day's note, creating it with that text if needed.",
+      inputSchema: { markdown: z.string().min(1), day: z.string().optional(), space },
+      annotations: WRITE,
+    },
+    ({ markdown, day, space }) => run(() => tools.writeDailyNote(markdown, space, day))
   )
 
   server.registerTool(
@@ -233,19 +252,94 @@ export function mcpServer(tools: AgentTools, version: string): McpServer {
     {
       title: 'Create object',
       description:
-        'A new object of a type (name or id, e.g. "Page", "Task", "Book"), with a title, properties and text in Markdown. It starts from the type\'s default template, or the one "template" names ("blank" for none; list_templates lists them and their questions, answered by "answers"); what you give wins over the template. Returns it like get_object.',
+        'A new object of a type (name or id, e.g. "Page", "Task", "Book"), with a title, properties and text in Markdown. It starts from the type\'s default template, or the one "template" names ("blank" for none; list_templates lists them and their questions, answered by "answers"); what you give wins over the template (tags are added to the template\'s). Returns it like get_object.',
       inputSchema: {
         type: z.string(),
+        coverUrl: z.string().optional().describe("HTTP(S) cover image URL"),
         title: z.string().optional(),
         space,
         properties,
         markdown: z.string().optional().describe('Its text, in Markdown (after the template\'s)'),
         template: z.string().optional().describe('A template of the type by name, or "blank"'),
         answers: z.record(z.string(), z.string()).optional().describe("Answers to the template's questions, by question"),
+        tags,
+        icon,
+        color,
       },
       annotations: WRITE,
     },
     (input) => run(() => tools.createObject(strip(input)))
+  )
+
+  const boardColor = z.enum(COLOR_NAMES).optional()
+  const arrowLook = {
+    path: z.enum(['straight', 'curved', 'elbow']).optional().describe("An arrow's course"),
+    heads: z.enum(['end', 'both', 'none']).optional().describe('Which ends have a head (none: a plain line)'),
+    dashed: z.boolean().optional(),
+  }
+  server.registerTool(
+    'get_board',
+    {
+      title: 'Get whiteboard',
+      description:
+        'A whiteboard\'s elements (cards of objects, text, sticky notes, shapes, frames, pen strokes without their ink) with their boxes in board coordinates (x right, y down), and its arrows. format "canvas" gives the board as a JSON Canvas (jsoncanvas.org, Obsidian\'s format) instead.',
+      inputSchema: { id: z.string(), format: z.enum(['elements', 'canvas']).optional() },
+      annotations: READ,
+    },
+    ({ id, format }) => run(() => tools.getBoard(id, format))
+  )
+
+  server.registerTool(
+    'edit_board',
+    {
+      title: 'Edit whiteboard',
+      description:
+        'Change a whiteboard in one step (make one with create_object, type "Whiteboard"). "add": elements; a card shows an object ("object": its id or exact title), text, sticky and shape hold "text", a frame has a "title"; give x and y to place one, else new elements are laid out in a grid to the right of the board; "ref" names a new element so "arrows" can use it. "arrows": from and to are refs or ids from get_board. "update": move, resize, recolor, retext, retitle, reshape elements or relabel arrows. "remove": ids (an element\'s arrows and the strokes drawn on it go too). "mermaid": a Mermaid flowchart ("graph LR; A[Idea] --> B{Choose}"), laid out as shapes and arrows, nodes named like an object of the space becoming its card. "canvas": a JSON Canvas to add. Returns the board as get_board does, with the ids given to refs.',
+      inputSchema: {
+        id: z.string(),
+        add: z
+          .array(
+            z.object({
+              ref: z.string().optional(),
+              kind: z.enum(['card', 'text', 'sticky', 'shape', 'frame']),
+              object: z.string().optional(),
+              text: z.string().optional(),
+              shape: z.enum(['rectangle', 'ellipse', 'diamond', 'triangle', 'parallelogram', 'star', 'heart']).optional(),
+              title: z.string().optional(),
+              color: boardColor,
+              x: z.number().optional(),
+              y: z.number().optional(),
+              w: z.number().optional(),
+              h: z.number().optional(),
+            })
+          )
+          .optional(),
+        arrows: z.array(z.object({ from: z.string(), to: z.string(), label: z.string().optional(), color: boardColor, ...arrowLook })).optional(),
+        update: z
+          .array(
+            z.object({
+              id: z.string(),
+              x: z.number().optional(),
+              y: z.number().optional(),
+              w: z.number().optional(),
+              h: z.number().optional(),
+              text: z.string().optional(),
+              title: z.string().optional(),
+              shape: z.enum(['rectangle', 'ellipse', 'diamond', 'triangle', 'parallelogram', 'star', 'heart']).optional(),
+              label: z.string().optional(),
+              color: z.enum(COLOR_NAMES).nullable().optional(),
+              ...arrowLook,
+              view: z.enum(['card', 'compact', 'embed']).optional().describe("A card's look: its card, one line, or its contents (a query's live results, the text)"),
+            })
+          )
+          .optional(),
+        remove: z.array(z.string()).optional(),
+        mermaid: z.string().optional(),
+        canvas: z.union([z.string(), z.record(z.string(), z.unknown())]).optional().describe('A JSON Canvas, as an object or its text'),
+      },
+      annotations: WRITE,
+    },
+    (input) => run(() => tools.editBoard(strip(input)))
   )
 
   server.registerTool(
@@ -263,18 +357,35 @@ export function mcpServer(tools: AgentTools, version: string): McpServer {
     'update_object',
     {
       title: 'Update object',
-      description: 'Change an object: its title, properties (null clears one), and its text: Markdown appended (default), put before the text ("prepend"), or replacing it ("replace"). "field" picks a text field by name when the type has several.',
+      description:
+        'Change an object: its title, icon, color, properties (null clears one), its tags (added by default; "tagsMode" "remove" takes them off, "replace" sets exactly these), and its text: Markdown appended (default), put before the text ("prepend"), or replacing it ("replace"). "field" picks a text field by name when the type has several.',
       inputSchema: {
         id: z.string(),
+        coverUrl: z.string().nullable().optional().describe("HTTP(S) cover image URL, or null to remove it"),
         title: z.string().optional(),
         properties,
         markdown: z.string().optional(),
         mode: z.enum(['append', 'prepend', 'replace']).optional(),
         field: z.string().optional(),
+        tags,
+        tagsMode: z.enum(['add', 'remove', 'replace']).optional().describe('What "tags" does: add them (default), remove them, or replace all the tags with them'),
+        icon,
+        color,
       },
       annotations: { ...WRITE, destructiveHint: true },
     },
     (input) => run(() => tools.updateObject(strip(input)))
+  )
+
+  server.registerTool(
+    'set_pinned',
+    {
+      title: 'Set pinned',
+      description: 'Pin an object in the first sidebar section, or unpin it from all sections.',
+      inputSchema: { id: z.string(), pinned: z.boolean() },
+      annotations: WRITE,
+    },
+    ({ id, pinned }) => run(() => tools.setPinned(id, pinned))
   )
 
   server.registerTool(

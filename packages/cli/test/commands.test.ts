@@ -82,7 +82,7 @@ describe('vasta CLI', () => {
     await vasta(['append', id], '- step one\n- step two')
     await vasta(['set', id, 'status=done', '--title', 'Write the agent docs'])
     expect(await vasta(['show', `https://notes.example/o/${id}`])).toBe(
-      [`# Write the agent docs`, `Task · Notes · https://notes.example/o/${id}`, 'Status: Done', 'Priority: High', '', 'For **agents**.', '', '- step one', '- step two'].join('\n')
+      [`# Write the agent docs`, `Task · Notes · https://notes.example/o/${id}`, 'Pinned: no', 'Status: Done', 'Priority: High', '', 'For **agents**.', '', '- step one', '- step two'].join('\n')
     )
     expect(await vasta(['search', 'agents'])).toBe(`Write the agent docs  · Task  ${id}`)
     expect(await vasta(['query', '--type', 'Task', '--where', 'status is Done'])).toBe(`Write the agent docs  · Task  ${id}`)
@@ -96,5 +96,44 @@ describe('vasta CLI', () => {
     await expect(vasta(['new'])).rejects.toThrow('vasta new <type>')
     await expect(vasta(['show', 'missing'])).rejects.toThrow('no object missing')
     expect(JSON.parse(await vasta(['tool', 'list_spaces']))).toEqual([{ id: 's', name: 'Notes', default: true }])
+  })
+
+  it('tags objects and sets their icon and color', async () => {
+    const { store, vasta } = await setup()
+    const shown = async (id: string) => JSON.parse(await vasta(['show', id, '--json'])) as { tags?: string[]; icon: string | null; color: string | null }
+    const tag = JSON.parse(await vasta(['new', 'Tag', 'Books', '--json'])).id as string
+
+    const id = JSON.parse(await vasta(['new', 'Page', 'Dune', '--tag', 'books', '--tag', 'reading/2026', '--json'])).id as string
+    expect((await shown(id)).tags).toEqual(['Books', 'reading/2026'])
+    expect(store.getObject(id)!.tagIds[0]).toBe(tag)
+
+    await vasta(['set', id, '--tag', 'sci-fi', '--remove-tag', 'Books'])
+    expect((await shown(id)).tags).toEqual(['reading/2026', 'sci-fi'])
+    await vasta(['set', id, '--set-tags', 'Books, sci-fi'])
+    expect((await shown(id)).tags).toEqual(['Books', 'sci-fi'])
+    expect(store.listObjects('tag:s')).toHaveLength(4)
+
+    expect(await vasta(['set', tag, '--icon', 'ph:star', '--color', 'amber'])).toContain('Icon: ph:star\nColor: amber')
+    expect(await shown(tag)).toMatchObject({ icon: 'ph:star', color: 'amber' })
+    await vasta(['set', tag, '--color', 'none'])
+    expect(await shown(tag)).toMatchObject({ icon: 'ph:star', color: null })
+
+    await expect(vasta(['set', id, '--set-tags', 'a', '--tag', 'b'])).rejects.toThrow('--set-tags replaces')
+    await expect(vasta(['set', id, '--icon', 'ph:nope'])).rejects.toThrow('unknown icon')
+  })
+
+  it('shows a whiteboard, adds a Mermaid flowchart and a JSON Canvas to it', async () => {
+    const { vasta } = await setup()
+    const made = JSON.parse(await vasta(['new', 'Whiteboard', 'Plans', '--json']))
+    expect(await vasta(['board', made.id])).toContain('Empty.')
+    const added = await vasta(['board', made.url, '--mermaid'], 'graph TD\n A[Start] -->|go| B((End))')
+    expect(added).toMatch(/rectangle\s+"Start"/)
+    expect(added).toMatch(/ellipse\s+"End"/)
+    expect(added).toContain('Start → End  (go)')
+    const canvas = await vasta(['board', made.id, '--canvas'])
+    expect(JSON.parse(canvas).nodes).toHaveLength(2)
+    const other = JSON.parse(await vasta(['new', 'Whiteboard', 'Copy', '--json']))
+    expect(await vasta(['board', other.id, '--import'], canvas)).toContain('Start → End')
+    await expect(vasta(['board', made.id, '--mermaid'], '')).rejects.toThrow('Mermaid')
   })
 })
