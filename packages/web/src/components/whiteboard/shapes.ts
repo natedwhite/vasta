@@ -6,6 +6,7 @@ import type {
   LineTermination,
   Point,
   ShapeElement,
+  ShapeType,
   StrokeStyle,
 } from './types.ts'
 
@@ -47,6 +48,7 @@ export const isLine = (s: ShapeElement) => s.type === 'line' || s.type === 'arro
 export interface SnapTarget {
   id: string
   kind: AnchorTargetKind
+  shapeType?: ShapeType
   x: number
   y: number
   width: number
@@ -62,10 +64,10 @@ export interface SnapCandidate {
   target: SnapTarget
 }
 
-export const ANCHOR_SIDES: AnchorSide[] = ['top', 'right', 'bottom', 'left']
+export const ANCHOR_SIDES: AnchorSide[] = ['top', 'right', 'bottom', 'left', 'center']
 
 export function orientationForSide(side?: AnchorSide): 'horizontal' | 'vertical' | undefined {
-  if (!side) return undefined
+  if (!side || side === 'center') return undefined
   return side === 'left' || side === 'right' ? 'horizontal' : 'vertical'
 }
 
@@ -74,8 +76,8 @@ export function anchorTargetId(anchor?: ConnectorAnchor): string | undefined {
 }
 
 /**
- * Computes the world-space anchor point on a target's edge (`top`, `right`, `bottom`, `left`),
- * including for triangles, diamonds, ellipses, and rotated objects.
+ * Computes the world-space anchor point on a target's edge or center (`top`, `right`, `bottom`, `left`, `center`),
+ * with exact edge geometry for triangles, diamonds, ellipses, cards, and stickies.
  */
 export function getAnchorPoint(target: SnapTarget, side: AnchorSide): Point {
   const minX = Math.min(target.x, target.x + target.width)
@@ -86,19 +88,42 @@ export function getAnchorPoint(target: SnapTarget, side: AnchorSide): Point {
   const cy = minY + h / 2
 
   let local: Point
-  switch (side) {
-    case 'top':
-      local = { x: cx, y: minY }
-      break
-    case 'right':
-      local = { x: minX + w, y: cy }
-      break
-    case 'bottom':
-      local = { x: cx, y: minY + h }
-      break
-    case 'left':
-      local = { x: minX, y: cy }
-      break
+  if (target.shapeType === 'triangle') {
+    switch (side) {
+      case 'top':
+        local = { x: cx, y: minY }
+        break
+      case 'left':
+        local = { x: minX + w * 0.25, y: cy }
+        break
+      case 'right':
+        local = { x: minX + w * 0.75, y: cy }
+        break
+      case 'bottom':
+        local = { x: cx, y: minY + h }
+        break
+      case 'center':
+        local = { x: cx, y: cy }
+        break
+    }
+  } else {
+    switch (side) {
+      case 'top':
+        local = { x: cx, y: minY }
+        break
+      case 'right':
+        local = { x: minX + w, y: cy }
+        break
+      case 'bottom':
+        local = { x: cx, y: minY + h }
+        break
+      case 'left':
+        local = { x: minX, y: cy }
+        break
+      case 'center':
+        local = { x: cx, y: cy }
+        break
+    }
   }
   return target.rotation ? rotatePoint(local, { x: cx, y: cy }, target.rotation) : local
 }
@@ -108,10 +133,10 @@ export function getAllAnchorPoints(target: SnapTarget): { side: AnchorSide; poin
 }
 
 /**
- * Picks the best side on `target` to connect toward `referencePt`.
+ * Picks the best outer side on `target` to connect toward `referencePt`.
  */
 export function bestSideToward(target: SnapTarget, referencePt: Point): AnchorSide {
-  const anchors = getAllAnchorPoints(target)
+  const anchors = getAllAnchorPoints(target).filter((a) => a.side !== 'center')
   let best = anchors[0]!
   let bestDist = Infinity
   for (const a of anchors) {
@@ -274,6 +299,7 @@ export interface ConnectorGeometry {
   endHead?: string // SVG path for polygon/circle
   hitPoints: Point[]
   midPoint?: Point
+  labelPoint: Point
 }
 
 /**
@@ -303,35 +329,37 @@ export function getConnectorGeometry(s: ShapeElement): ConnectorGeometry {
   const hasEndArrow = endTerm === 'arrow'
   const hasEndDot = endTerm === 'dot'
 
-  // Outer edge offset when snapped to an object so arrow termination touches the outer edge
-  // rather than penetrating to the inner edge/interior. Dot termination remains centered on the edge.
-  const SNAP_OUTER_OFFSET = 3.5
+  const startCapRadius = strokeW / 2
+  const endCapRadius = strokeW / 2
+  const ARROW_SNAP_OFFSET = 1.5
+  const startOffset = hasStartArrow ? ARROW_SNAP_OFFSET : hasStartDot ? 0 : startCapRadius
+  const endOffset = hasEndArrow ? ARROW_SNAP_OFFSET : hasEndDot ? 0 : endCapRadius
 
   let x1 = s.x
   let y1 = s.y
-  if (s.startAnchor?.side && !hasStartDot) {
-    if (s.startAnchor.side === 'left') x1 -= SNAP_OUTER_OFFSET
-    else if (s.startAnchor.side === 'right') x1 += SNAP_OUTER_OFFSET
-    else if (s.startAnchor.side === 'top') y1 -= SNAP_OUTER_OFFSET
-    else if (s.startAnchor.side === 'bottom') y1 += SNAP_OUTER_OFFSET
+  if (s.startAnchor?.side) {
+    if (s.startAnchor.side === 'left') x1 -= startOffset
+    else if (s.startAnchor.side === 'right') x1 += startOffset
+    else if (s.startAnchor.side === 'top') y1 -= startOffset
+    else if (s.startAnchor.side === 'bottom') y1 += startOffset
   }
 
   let x2 = s.x + s.width
   let y2 = s.y + s.height
-  if (s.endAnchor?.side && !hasEndDot) {
-    if (s.endAnchor.side === 'left') x2 -= SNAP_OUTER_OFFSET
-    else if (s.endAnchor.side === 'right') x2 += SNAP_OUTER_OFFSET
-    else if (s.endAnchor.side === 'top') y2 -= SNAP_OUTER_OFFSET
-    else if (s.endAnchor.side === 'bottom') y2 += SNAP_OUTER_OFFSET
+  if (s.endAnchor?.side) {
+    if (s.endAnchor.side === 'left') x2 -= endOffset
+    else if (s.endAnchor.side === 'right') x2 += endOffset
+    else if (s.endAnchor.side === 'top') y2 -= endOffset
+    else if (s.endAnchor.side === 'bottom') y2 += endOffset
   }
-
-  const arrowLen = Math.max(14, strokeW * 4.2)
-  const arrowWidth = Math.max(12, strokeW * 3.6)
-  const dotRadius = Math.max(5.5, strokeW * 1.8)
 
   const dx = x2 - x1
   const dy = y2 - y1
   const dist = Math.hypot(dx, dy)
+
+  const arrowLen = Math.min(Math.max(14, strokeW * 4.2), Math.max(6, dist * 0.45))
+  const arrowWidth = Math.min(Math.max(12, strokeW * 3.6), Math.max(6, dist * 0.4))
+  const dotRadius = Math.min(Math.max(5.5, strokeW * 1.8), Math.max(3, dist * 0.35))
 
   if (dist < 4) {
     return {
@@ -339,6 +367,7 @@ export function getConnectorGeometry(s: ShapeElement): ConnectorGeometry {
       shaftStart: { x: x1, y: y1 },
       shaftEnd: { x: x2, y: y2 },
       hitPoints: [{ x: x1, y: y1 }, { x: x2, y: y2 }],
+      labelPoint: { x: (x1 + x2) / 2, y: (y1 + y2) / 2 },
     }
   }
 
@@ -447,6 +476,10 @@ export function getConnectorGeometry(s: ShapeElement): ConnectorGeometry {
         r > 2 && startSign === baseUx && endSign === baseUy
           ? `${p1} ${c1} ${p2}`
           : `M ${shaftStart.x} ${shaftStart.y} L ${cornerX} ${cornerY} L ${shaftEnd.x} ${shaftEnd.y}`
+      const labelPoint =
+        Math.abs(cornerX - x1) >= Math.abs(y2 - cornerY)
+          ? { x: (x1 + cornerX) / 2, y: cornerY }
+          : { x: cornerX, y: (cornerY + y2) / 2 }
       return {
         shaftPath,
         shaftStart,
@@ -454,6 +487,7 @@ export function getConnectorGeometry(s: ShapeElement): ConnectorGeometry {
         startHead,
         endHead,
         hitPoints: [{ x: x1, y: y1 }, { x: cornerX, y: cornerY }, { x: x2, y: y2 }],
+        labelPoint,
       }
     } else if (startOri === 'vertical' && endOri === 'horizontal') {
       const cornerX = x1
@@ -465,6 +499,10 @@ export function getConnectorGeometry(s: ShapeElement): ConnectorGeometry {
         r > 2 && startSign === baseUy && endSign === baseUx
           ? `${p1} ${c1} ${p2}`
           : `M ${shaftStart.x} ${shaftStart.y} L ${cornerX} ${cornerY} L ${shaftEnd.x} ${shaftEnd.y}`
+      const labelPoint =
+        Math.abs(cornerY - y1) >= Math.abs(x2 - cornerX)
+          ? { x: cornerX, y: (y1 + cornerY) / 2 }
+          : { x: (cornerX + x2) / 2, y: cornerY }
       return {
         shaftPath,
         shaftStart,
@@ -472,10 +510,25 @@ export function getConnectorGeometry(s: ShapeElement): ConnectorGeometry {
         startHead,
         endHead,
         hitPoints: [{ x: x1, y: y1 }, { x: cornerX, y: cornerY }, { x: x2, y: y2 }],
+        labelPoint,
       }
     } else if (startOri === 'vertical' && endOri === 'vertical') {
       const isTopTop = s.startAnchor?.side === 'top' && s.endAnchor?.side === 'top'
       const isBottomBottom = s.startAnchor?.side === 'bottom' && s.endAnchor?.side === 'bottom'
+      if (Math.abs(dx) < 6 && s.midOffset === undefined && !isTopTop && !isBottomBottom && startSign === baseUy) {
+        const shaftPath = `M ${shaftStart.x} ${shaftStart.y} L ${shaftEnd.x} ${shaftEnd.y}`
+        const midPt = { x: (x1 + x2) / 2, y: (y1 + y2) / 2 }
+        return {
+          shaftPath,
+          shaftStart,
+          shaftEnd,
+          startHead,
+          endHead,
+          hitPoints: [{ x: x1, y: y1 }, { x: x2, y: y2 }],
+          midPoint: midPt,
+          labelPoint: midPt,
+        }
+      }
       const DEFAULT_CLEARANCE = 36
       let midY: number
       if (s.midOffset !== undefined) {
@@ -485,7 +538,7 @@ export function getConnectorGeometry(s: ShapeElement): ConnectorGeometry {
       } else if (isBottomBottom) {
         midY = Math.max(s.y, s.y + s.height) + DEFAULT_CLEARANCE
       } else {
-        const stub = 24
+        const stub = Math.min(24, Math.abs(dy) / 2)
         midY = s.y + dy / 2
         if (s.startAnchor?.side && startSign * dy < stub) {
           midY = s.y + startSign * Math.max(stub, Math.abs(dy) + stub)
@@ -504,6 +557,7 @@ export function getConnectorGeometry(s: ShapeElement): ConnectorGeometry {
         r > 2 && Math.abs(midY - shaftStart.y) > r && Math.abs(shaftEnd.y - midY) > r
           ? `${p1} ${c1} ${p2} ${c2} ${p3}`
           : `M ${shaftStart.x} ${shaftStart.y} L ${x1} ${midY} L ${x2} ${midY} L ${shaftEnd.x} ${shaftEnd.y}`
+      const midPt = { x: (x1 + x2) / 2, y: midY }
       return {
         shaftPath,
         shaftStart,
@@ -511,12 +565,27 @@ export function getConnectorGeometry(s: ShapeElement): ConnectorGeometry {
         startHead,
         endHead,
         hitPoints: [{ x: x1, y: y1 }, { x: x1, y: midY }, { x: x2, y: midY }, { x: x2, y: y2 }],
-        midPoint: { x: (x1 + x2) / 2, y: midY },
+        midPoint: midPt,
+        labelPoint: midPt,
       }
     } else {
       // Horizontal -> Horizontal (standard 3 segment)
       const isLeftLeft = s.startAnchor?.side === 'left' && s.endAnchor?.side === 'left'
       const isRightRight = s.startAnchor?.side === 'right' && s.endAnchor?.side === 'right'
+      if (Math.abs(dy) < 6 && s.midOffset === undefined && !isLeftLeft && !isRightRight && startSign === baseUx) {
+        const shaftPath = `M ${shaftStart.x} ${shaftStart.y} L ${shaftEnd.x} ${shaftEnd.y}`
+        const midPt = { x: (x1 + x2) / 2, y: (y1 + y2) / 2 }
+        return {
+          shaftPath,
+          shaftStart,
+          shaftEnd,
+          startHead,
+          endHead,
+          hitPoints: [{ x: x1, y: y1 }, { x: x2, y: y2 }],
+          midPoint: midPt,
+          labelPoint: midPt,
+        }
+      }
       const DEFAULT_CLEARANCE = 36
       let midX: number
       if (s.midOffset !== undefined) {
@@ -526,7 +595,7 @@ export function getConnectorGeometry(s: ShapeElement): ConnectorGeometry {
       } else if (isRightRight) {
         midX = Math.max(s.x, s.x + s.width) + DEFAULT_CLEARANCE
       } else {
-        const stub = 24
+        const stub = Math.min(24, Math.abs(dx) / 2)
         midX = s.x + dx / 2
         if (s.startAnchor?.side && startSign * dx < stub) {
           midX = s.x + startSign * Math.max(stub, Math.abs(dx) + stub)
@@ -545,6 +614,7 @@ export function getConnectorGeometry(s: ShapeElement): ConnectorGeometry {
         r > 2 && Math.abs(midX - shaftStart.x) > r && Math.abs(shaftEnd.x - midX) > r
           ? `${p1} ${c1} ${p2} ${c2} ${p3}`
           : `M ${shaftStart.x} ${shaftStart.y} L ${midX} ${y1} L ${midX} ${y2} L ${shaftEnd.x} ${shaftEnd.y}`
+      const midPt = { x: midX, y: (y1 + y2) / 2 }
       return {
         shaftPath,
         shaftStart,
@@ -552,7 +622,8 @@ export function getConnectorGeometry(s: ShapeElement): ConnectorGeometry {
         startHead,
         endHead,
         hitPoints: [{ x: x1, y: y1 }, { x: midX, y: y1 }, { x: midX, y: y2 }, { x: x2, y: y2 }],
-        midPoint: { x: midX, y: (y1 + y2) / 2 },
+        midPoint: midPt,
+        labelPoint: midPt,
       }
     }
   }
@@ -625,6 +696,7 @@ export function getConnectorGeometry(s: ShapeElement): ConnectorGeometry {
       endHead,
       hitPoints: [{ x: x1, y: y1 }, ctrl, { x: x2, y: y2 }],
       midPoint,
+      labelPoint: midPoint,
     }
   }
 
@@ -666,6 +738,7 @@ export function getConnectorGeometry(s: ShapeElement): ConnectorGeometry {
     startHead,
     endHead,
     hitPoints: [{ x: x1, y: y1 }, { x: x2, y: y2 }],
+    labelPoint: { x: (shaftStart.x + shaftEnd.x) / 2, y: (shaftStart.y + shaftEnd.y) / 2 },
   }
 }
 

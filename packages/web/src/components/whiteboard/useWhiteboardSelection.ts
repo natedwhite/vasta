@@ -1,7 +1,9 @@
 import { computed, nextTick, ref, type ComputedRef, type Ref } from 'vue'
-import type { ObjectSummary, PropertyDef } from '@vasta/core'
+import type { Id, ObjectSummary, ObjectType, PropertyDef, RelationPropertyDef } from '@vasta/core'
+import { api } from '../../lib/api.ts'
+import { clone } from '../../lib/clone.ts'
 import { displayTitle } from '../../lib/format.ts'
-import { cachedSummary, typesById } from '../../lib/state.ts'
+import { cachedSummary, notice, primeFromObject, replaceType, summaryOf, typesById } from '../../lib/state.ts'
 import { newId } from './ids.ts'
 import {
   anchorTargetId,
@@ -65,6 +67,45 @@ export interface SelectedGeometry {
   shapeType?: string
   handles: Handle[]
   rotateHandle: Point | null
+}
+
+export interface ConnectorRelationOption {
+  key: string
+  direction: 'forward' | 'inverse' | 'two-way'
+  prop: RelationPropertyDef
+  ownerCard: ObjectCardElement
+  targetCard: ObjectCardElement
+  ownerObjectId: Id
+  targetObjectId: Id
+  ownerTitle: string
+  targetTitle: string
+  ownerTypeName: string
+  targetTypeName: string
+  displayName: string
+  twoWayDisplayName?: string
+  reverseName?: string
+  subtitle: string
+  isAssignedToConnector: boolean
+  alreadyInVasta: boolean
+  isTwoWayCapable?: boolean
+}
+
+export interface ConnectorRelationBadgeInfo {
+  propertyId: Id
+  propertyName: string
+  targetSideName?: string
+  displayLabel: string
+  ownerObjectId: Id
+  targetObjectId: Id
+  ownerTitle: string
+  targetTitle: string
+  direction: 'forward' | 'inverse' | 'two-way'
+  twoWay?: boolean
+  shownOnOwnerCard: boolean
+  shownOnTargetCard?: boolean
+  ownerCardId?: string
+  targetCardId?: string
+  syncedInVasta: boolean
 }
 
 export const keyOf = (kind: Kind, id: string) => `${kind}:${id}`
@@ -175,7 +216,7 @@ export function useWhiteboardSelection(opts: UseWhiteboardSelectionOptions) {
     }
     for (const sh of shapes.value) {
       if (isLine(sh) || excludeIds?.has(sh.id)) continue
-      targets.push({ id: sh.id, kind: 'shape', x: sh.x, y: sh.y, width: sh.width, height: sh.height, rotation: sh.rotation, z: sh.zIndex ?? 1 })
+      targets.push({ id: sh.id, kind: 'shape', shapeType: sh.type, x: sh.x, y: sh.y, width: sh.width, height: sh.height, rotation: sh.rotation, z: sh.zIndex ?? 1 })
     }
     targets.sort((a, b) => a.z - b.z)
     return targets
@@ -192,7 +233,7 @@ export function useWhiteboardSelection(opts: UseWhiteboardSelectionOptions) {
     }
     if (!kind || kind === 'shape') {
       const sh = shapes.value.find((x) => x.id === id && !isLine(x))
-      if (sh) return { id: sh.id, kind: 'shape', x: sh.x, y: sh.y, width: sh.width, height: sh.height, rotation: sh.rotation }
+      if (sh) return { id: sh.id, kind: 'shape', shapeType: sh.type, x: sh.x, y: sh.y, width: sh.width, height: sh.height, rotation: sh.rotation }
     }
     return undefined
   }
@@ -311,18 +352,27 @@ export function useWhiteboardSelection(opts: UseWhiteboardSelectionOptions) {
 
   /**
    * Clears `startAnchor` / `endAnchor` on any connector pointing to a deleted object ID.
+   * If the connector was bound to a Vasta relation, unlinks the relation cleanly.
    */
   function detachAnchorsTo(deletedIds: Set<string>) {
     if (!deletedIds.size) return
     for (const s of shapes.value) {
       if (!isLine(s)) continue
+      let detached = false
       const sId = anchorTargetId(s.startAnchor)
       if (sId && deletedIds.has(sId)) {
         delete s.startAnchor
+        detached = true
       }
       const eId = anchorTargetId(s.endAnchor)
       if (eId && deletedIds.has(eId)) {
         delete s.endAnchor
+        detached = true
+      }
+      if (detached && s.relation) {
+        const rel = s.relation
+        delete s.relation
+        void removeRelationValueInVasta(rel.ownerObjectId, rel.propertyId, rel.targetObjectId)
       }
     }
   }
@@ -395,6 +445,11 @@ export function useWhiteboardSelection(opts: UseWhiteboardSelectionOptions) {
     let z = 1
     const raw = getAllRawItems()
     for (const entry of raw) {
+      if (entry.item.zIndex === undefined && entry.kind === 'shape' && isLine(entry.item as ShapeElement)) {
+        entry.item.zIndex = z++
+      }
+    }
+    for (const entry of raw) {
       if (entry.item.zIndex === undefined) entry.item.zIndex = z++
     }
   }
@@ -423,7 +478,7 @@ export function useWhiteboardSelection(opts: UseWhiteboardSelectionOptions) {
     const list: CanvasItem[] = raw.map((entry) => ({
       key: entry.key,
       kind: entry.kind,
-      zIndex: entry.item.zIndex ?? 1,
+      zIndex: entry.item.zIndex ?? (entry.kind === 'shape' && isLine(entry.item as ShapeElement) ? 0 : 10),
       item: entry.item,
     })) as CanvasItem[]
     return list.sort((a, b) => a.zIndex - b.zIndex)
@@ -660,6 +715,23 @@ export function useWhiteboardSelection(opts: UseWhiteboardSelectionOptions) {
     if (!selected.value.length) return
     const gone = new Set(selected.value)
     const deletedObjectIds = new Set(selected.value.map((k) => parseKey(k).id))
+    for (const s of shapes.value) {
+      if (gone.has(keyOf('shape', s.id)) && isLine(s) && s.relation) {
+        const rel = s.relation
+        const info = getConnectorRelationInfo(s)
+        void removeRelationValueInVasta(rel.ownerObjectId, rel.propertyId, rel.targetObjectId).then(() => {
+          notice.value = {
+            message: `Unlinked ${info?.propertyName || 'relation'} (${info?.ownerTitle || 'Object'} → ${info?.targetTitle || 'Object'})`,
+            action: {
+              label: 'Undo',
+              run: async () => {
+                await addRelationValueInVasta(rel.ownerObjectId, rel.propertyId, rel.targetObjectId, true)
+              },
+            },
+          }
+        })
+      }
+    }
     strokes.value = strokes.value.filter((s) => !gone.has(keyOf('stroke', s.id)))
     shapes.value = shapes.value.filter((s) => !gone.has(keyOf('shape', s.id)))
     cards.value = cards.value.filter((c) => !gone.has(keyOf('card', c.id)))
@@ -686,6 +758,7 @@ export function useWhiteboardSelection(opts: UseWhiteboardSelectionOptions) {
         if (found.kind === 'shape' && isLine(copy)) {
           delete copy.startAnchor
           delete copy.endAnchor
+          delete copy.relation
           if (copy.controlPoint) {
             copy.controlPoint = { x: copy.controlPoint.x + offset, y: copy.controlPoint.y + offset }
           }
@@ -1290,6 +1363,539 @@ export function useWhiteboardSelection(opts: UseWhiteboardSelectionOptions) {
     notifyChange()
   }
 
+  // ---------------------------------------------------------------------------
+  // Connector-as-Relation (Binding Whiteboard Connectors to Vasta Relations)
+  // ---------------------------------------------------------------------------
+
+  const selectedConnector = computed<ShapeElement | null>(() => {
+    if (!isOnlySelectedLine.value) return null
+    const id = parseKey(selected.value[0]!).id
+    const s = shapes.value.find((x) => x.id === id)
+    return s && isLine(s) ? s : null
+  })
+
+  const connectorCardPair = computed<{
+    connector: ShapeElement
+    fromCard: ObjectCardElement
+    toCard: ObjectCardElement
+    fromSummary?: ObjectSummary
+    toSummary?: ObjectSummary
+    fromType?: ObjectType
+    toType?: ObjectType
+  } | null>(() => {
+    const s = selectedConnector.value
+    if (!s) return null
+    const startId = anchorTargetId(s.startAnchor)
+    const endId = anchorTargetId(s.endAnchor)
+    if (!startId || !endId || startId === endId) return null
+    const fromCard = cards.value.find((c) => c.id === startId)
+    const toCard = cards.value.find((c) => c.id === endId)
+    if (!fromCard || !toCard || fromCard.objectId === toCard.objectId) return null
+    const fromSummary = summaryOf(fromCard.objectId)
+    const toSummary = summaryOf(toCard.objectId)
+    const fromType = typesById.value.get(fromSummary?.typeId || fromCard.typeId)
+    const toType = typesById.value.get(toSummary?.typeId || toCard.typeId)
+    return { connector: s, fromCard, toCard, fromSummary, toSummary, fromType, toType }
+  })
+
+  const connectorRelationOptions = computed<ConnectorRelationOption[]>(() => {
+    const pair = connectorCardPair.value
+    if (!pair) return []
+    const { connector, fromCard, toCard, fromSummary, toSummary, fromType, toType } = pair
+    const fromTitle = getCardTitle(fromCard)
+    const toTitle = getCardTitle(toCard)
+    const fromTypeName = getCardTypeName(fromCard)
+    const toTypeName = getCardTypeName(toCard)
+    const out: ConnectorRelationOption[] = []
+
+    // 1. Forward relations: properties on `fromType` that can point to `toType`
+    for (const p of fromType?.properties || []) {
+      if (p.kind !== 'relation') continue
+      if (p.targetTypeIds.length > 0 && (!toType || !p.targetTypeIds.includes(toType.id))) continue
+      const existingVal = fromSummary?.props?.[p.id]
+      const alreadyInVasta = !!(existingVal && existingVal.kind === 'relation' && existingVal.value.includes(toCard.objectId))
+      const isAssignedToConnector =
+        connector.relation?.propertyId === p.id &&
+        connector.relation?.ownerObjectId === fromCard.objectId &&
+        connector.relation?.targetObjectId === toCard.objectId
+
+      const reverseLabel = p.reverseName?.trim()
+      const twoWayLabel =
+        reverseLabel && reverseLabel.toLowerCase() !== p.name.toLowerCase()
+          ? `${p.name} ⇄ ${reverseLabel}`
+          : `${p.name} ⇄`
+
+      out.push({
+        key: `forward:${p.id}`,
+        direction: 'forward',
+        prop: p,
+        ownerCard: fromCard,
+        targetCard: toCard,
+        ownerObjectId: fromCard.objectId,
+        targetObjectId: toCard.objectId,
+        ownerTitle: fromTitle,
+        targetTitle: toTitle,
+        ownerTypeName: fromTypeName,
+        targetTypeName: toTypeName,
+        displayName: p.name,
+        twoWayDisplayName: twoWayLabel,
+        reverseName: reverseLabel,
+        subtitle: `${fromTitle} · ${p.name} → ${toTitle}`,
+        isAssignedToConnector,
+        alreadyInVasta,
+      })
+    }
+
+    // 2. Inverse relations: properties on `toType` that can point back to `fromType`
+    for (const p of toType?.properties || []) {
+      if (p.kind !== 'relation') continue
+      if (p.targetTypeIds.length > 0 && (!fromType || !p.targetTypeIds.includes(fromType.id))) continue
+      const existingVal = toSummary?.props?.[p.id]
+      const alreadyInVasta = !!(existingVal && existingVal.kind === 'relation' && existingVal.value.includes(fromCard.objectId))
+      const isAssignedToConnector =
+        connector.relation?.propertyId === p.id &&
+        connector.relation?.ownerObjectId === toCard.objectId &&
+        connector.relation?.targetObjectId === fromCard.objectId
+
+      // For same-type pairs without a reverseName, only include the inverse if it's already linked or assigned in that direction
+      if (fromType && toType && fromType.id === toType.id && !p.reverseName && !alreadyInVasta && !isAssignedToConnector) {
+        continue
+      }
+
+      const reverseLabel = p.reverseName?.trim()
+      const twoWayLabel =
+        reverseLabel && reverseLabel.toLowerCase() !== p.name.toLowerCase()
+          ? `${reverseLabel} ⇄ ${p.name}`
+          : `${p.name} ⇄`
+
+      out.push({
+        key: `inverse:${p.id}`,
+        direction: 'inverse',
+        prop: p,
+        ownerCard: toCard,
+        targetCard: fromCard,
+        ownerObjectId: toCard.objectId,
+        targetObjectId: fromCard.objectId,
+        ownerTitle: toTitle,
+        targetTitle: fromTitle,
+        ownerTypeName: toTypeName,
+        targetTypeName: fromTypeName,
+        displayName: p.reverseName ? `${p.reverseName} (${p.name})` : `${p.name} (on ${toTypeName})`,
+        twoWayDisplayName: twoWayLabel,
+        reverseName: reverseLabel,
+        subtitle: `${toTitle} · ${p.name} → ${fromTitle}`,
+        isAssignedToConnector,
+        alreadyInVasta,
+      })
+    }
+
+    return out
+  })
+
+  function getConnectorRelationInfo(s: ShapeElement): ConnectorRelationBadgeInfo | null {
+    if (!isLine(s) || !s.relation) return null
+    const { propertyId, ownerObjectId, targetObjectId } = s.relation
+    const ownerSummary = summaryOf(ownerObjectId)
+    const targetSummary = summaryOf(targetObjectId)
+    const startCard = cards.value.find((c) => c.id === anchorTargetId(s.startAnchor))
+    const endCard = cards.value.find((c) => c.id === anchorTargetId(s.endAnchor))
+    const ownerCard =
+      startCard?.objectId === ownerObjectId
+        ? startCard
+        : endCard?.objectId === ownerObjectId
+          ? endCard
+          : cards.value.find((c) => c.objectId === ownerObjectId)
+    const targetCard =
+      endCard?.objectId === targetObjectId
+        ? endCard
+        : startCard?.objectId === targetObjectId
+          ? startCard
+          : cards.value.find((c) => c.objectId === targetObjectId)
+    const ownerType = typesById.value.get(ownerSummary?.typeId || ownerCard?.typeId || '')
+    const prop = ownerType?.properties.find((p): p is RelationPropertyDef => p.id === propertyId && p.kind === 'relation')
+
+    const isTwoWay = !!s.relation.twoWay
+    const direction: 'forward' | 'inverse' | 'two-way' = isTwoWay
+      ? 'two-way'
+      : startCard?.objectId === ownerObjectId
+        ? 'forward'
+        : 'inverse'
+    const propertyName = prop?.name || 'Relation'
+    const targetSideName =
+      prop?.reverseName ||
+      (ownerCard?.typeId === targetCard?.typeId ? propertyName : undefined) ||
+      propertyName
+
+    let displayLabel: string
+    if (isTwoWay) {
+      if (targetSideName && targetSideName.toLowerCase() !== propertyName.toLowerCase()) {
+        displayLabel = `${propertyName} ⇄ ${targetSideName}`
+      } else {
+        displayLabel = `${propertyName} ⇄`
+      }
+    } else {
+      displayLabel = direction === 'inverse' && prop?.reverseName ? prop.reverseName : propertyName
+    }
+
+    const ownerTitle = ownerCard ? getCardTitle(ownerCard) : ownerSummary?.title || 'Object'
+    const targetTitle = targetCard ? getCardTitle(targetCard) : targetSummary?.title || 'Object'
+    const shownOnOwnerCard = !!ownerCard?.showProperties?.includes(propertyId)
+    const shownOnTargetCard = !!targetCard?.showProperties?.includes(propertyId)
+    const relVal = ownerSummary?.props?.[propertyId]
+    const syncedInVasta = !!(relVal && relVal.kind === 'relation' && relVal.value.includes(targetObjectId))
+
+    return {
+      propertyId,
+      propertyName,
+      targetSideName,
+      displayLabel,
+      ownerObjectId,
+      targetObjectId,
+      ownerTitle,
+      targetTitle,
+      direction,
+      twoWay: isTwoWay,
+      shownOnOwnerCard,
+      shownOnTargetCard,
+      ...(ownerCard ? { ownerCardId: ownerCard.id } : {}),
+      ...(targetCard ? { targetCardId: targetCard.id } : {}),
+      syncedInVasta,
+    }
+  }
+
+  const selectedConnectorRelationInfo = computed<ConnectorRelationBadgeInfo | null>(() => {
+    const s = selectedConnector.value
+    return s ? getConnectorRelationInfo(s) : null
+  })
+
+  const preferredRelationMode = ref<'forward' | 'inverse' | 'two-way'>('forward')
+
+  const relationDirectionMode = computed<'forward' | 'inverse' | 'two-way'>({
+    get() {
+      const s = selectedConnector.value
+      if (!s) return preferredRelationMode.value
+      if (s.relation?.twoWay) return 'two-way'
+      if (s.relation) {
+        const info = getConnectorRelationInfo(s)
+        return info?.direction || preferredRelationMode.value
+      }
+      return preferredRelationMode.value
+    },
+    set(val) {
+      preferredRelationMode.value = val
+    },
+  })
+
+  async function addRelationValueInVasta(ownerObjectId: Id, propertyId: Id, targetObjectId: Id, multiple: boolean) {
+    try {
+      const record = await api.object(ownerObjectId)
+      const base = clone(record)
+      const existing = record.props[propertyId]
+      const currentIds = existing && existing.kind === 'relation' ? [...existing.value] : []
+      if (!currentIds.includes(targetObjectId)) {
+        record.props[propertyId] = {
+          kind: 'relation',
+          value: multiple ? [...currentIds, targetObjectId] : [targetObjectId],
+        }
+        const saved = await api.saveObject(record, base)
+        primeFromObject(saved)
+      } else {
+        primeFromObject(record)
+      }
+    } catch {
+      // ignore offline/missing object errors
+    }
+  }
+
+  async function removeRelationValueInVasta(ownerObjectId: Id, propertyId: Id, targetObjectId: Id) {
+    try {
+      const record = await api.object(ownerObjectId)
+      const base = clone(record)
+      const existing = record.props[propertyId]
+      if (!existing || existing.kind !== 'relation' || !existing.value.includes(targetObjectId)) return
+      const nextIds = existing.value.filter((id) => id !== targetObjectId)
+      if (nextIds.length) {
+        record.props[propertyId] = { kind: 'relation', value: nextIds }
+      } else {
+        delete record.props[propertyId]
+      }
+      const saved = await api.saveObject(record, base)
+      primeFromObject(saved)
+    } catch {
+      // ignore offline/missing object errors
+    }
+  }
+
+  async function assignConnectorRelation(
+    propertyId: Id,
+    direction: 'forward' | 'inverse' | 'two-way' = 'forward',
+  ) {
+    const pair = connectorCardPair.value
+    if (!pair) return
+    const isTwoWay = direction === 'two-way'
+    const ownerCard = direction === 'inverse' ? pair.toCard : pair.fromCard
+    const targetCard = direction === 'inverse' ? pair.fromCard : pair.toCard
+    const ownerType = direction === 'inverse' ? pair.toType : pair.fromType
+    const prop = ownerType?.properties.find((p): p is RelationPropertyDef => p.id === propertyId && p.kind === 'relation')
+    if (!prop) return
+
+    // If switching from an older relation on this same connector, clean up first
+    const prevRel = pair.connector.relation
+    if (prevRel) {
+      if (
+        prevRel.propertyId !== prop.id ||
+        prevRel.ownerObjectId !== ownerCard.objectId ||
+        prevRel.targetObjectId !== targetCard.objectId ||
+        prevRel.twoWay !== isTwoWay
+      ) {
+        await removeRelationValueInVasta(prevRel.ownerObjectId, prevRel.propertyId, prevRel.targetObjectId)
+      }
+    }
+
+    pair.connector.relation = {
+      propertyId: prop.id,
+      ownerObjectId: ownerCard.objectId,
+      targetObjectId: targetCard.objectId,
+      ...(isTwoWay ? { twoWay: true } : {}),
+    }
+
+    // Automatically surface the relation property on card(s) so the user sees it immediately
+    const shown = ownerCard.showProperties ? [...ownerCard.showProperties] : []
+    if (!shown.includes(prop.id)) {
+      shown.push(prop.id)
+      ownerCard.showProperties = shown
+      if (ownerCard.height < 140) {
+        ownerCard.height = Math.max(ownerCard.height, 120 + shown.length * 22)
+      }
+    }
+
+    if (isTwoWay) {
+      const targetShown = targetCard.showProperties ? [...targetCard.showProperties] : []
+      if (!targetShown.includes(prop.id)) {
+        targetShown.push(prop.id)
+        targetCard.showProperties = targetShown
+        if (targetCard.height < 140) {
+          targetCard.height = Math.max(targetCard.height, 120 + targetShown.length * 22)
+        }
+      }
+    }
+
+    syncAnchoredConnectors()
+    void nextTick(() => syncAnchoredConnectors())
+    pushHistory()
+    notifyChange()
+
+    await addRelationValueInVasta(ownerCard.objectId, prop.id, targetCard.objectId, prop.multiple)
+
+    const targetLabel = prop.reverseName || prop.name
+    notice.value = {
+      message: isTwoWay
+        ? targetLabel.toLowerCase() !== prop.name.toLowerCase()
+          ? `Linked 2-way: ${getCardTitle(ownerCard)} (${prop.name}) ⇄ ${getCardTitle(targetCard)} (${targetLabel})`
+          : `Linked 2-way: ${getCardTitle(ownerCard)} ⇄ ${prop.name} ⇄ ${getCardTitle(targetCard)}`
+        : `Linked ${getCardTitle(ownerCard)} · ${prop.name} → ${getCardTitle(targetCard)}`,
+    }
+  }
+
+  async function setRelationDirectionMode(mode: 'forward' | 'inverse' | 'two-way') {
+    preferredRelationMode.value = mode
+    const s = selectedConnector.value
+    if (!s || !isLine(s)) return
+    const pair = connectorCardPair.value
+
+    if (mode === 'two-way') {
+      if (s.relation && pair) {
+        s.relation.twoWay = true
+        const targetCard = cards.value.find((c) => c.objectId === s.relation!.targetObjectId)
+        if (targetCard) {
+          const shown = targetCard.showProperties ? [...targetCard.showProperties] : []
+          if (!shown.includes(s.relation.propertyId)) {
+            shown.push(s.relation.propertyId)
+            targetCard.showProperties = shown
+          }
+        }
+      }
+    } else if (mode === 'forward') {
+      if (s.relation?.twoWay) {
+        s.relation.twoWay = false
+        const targetCard = cards.value.find((c) => c.objectId === s.relation!.targetObjectId)
+        if (targetCard && targetCard.showProperties) {
+          targetCard.showProperties = targetCard.showProperties.filter((id) => id !== s.relation!.propertyId)
+        }
+      }
+    } else if (mode === 'inverse') {
+      if (s.relation) {
+        s.relation.twoWay = false
+      }
+    }
+    syncAnchoredConnectors()
+    void nextTick(() => syncAnchoredConnectors())
+    pushHistory()
+    notifyChange()
+  }
+
+  async function unlinkConnectorRelation(connectorId?: string, removeFromObject = true) {
+    const s = connectorId ? shapes.value.find((x) => x.id === connectorId) : selectedConnector.value
+    if (!s || !s.relation) return
+    const prevRelation = { ...s.relation }
+    const info = getConnectorRelationInfo(s)
+    delete s.relation
+    pushHistory()
+    notifyChange()
+
+    if (removeFromObject) {
+      await removeRelationValueInVasta(prevRelation.ownerObjectId, prevRelation.propertyId, prevRelation.targetObjectId)
+      notice.value = {
+        message: `Unlinked ${info?.propertyName || 'relation'} (${info?.ownerTitle || 'Object'} → ${info?.targetTitle || 'Object'})`,
+        action: {
+          label: 'Undo',
+          run: async () => {
+            const targetShape = shapes.value.find((x) => x.id === s.id)
+            if (targetShape) {
+              targetShape.relation = prevRelation
+              notifyChange()
+            }
+            await addRelationValueInVasta(prevRelation.ownerObjectId, prevRelation.propertyId, prevRelation.targetObjectId, true)
+          },
+        },
+      }
+    }
+  }
+
+  async function createAndAssignConnectorRelation(input: {
+    name: string
+    restrictToTargetType: boolean
+    multiple: boolean
+    reverseName?: string
+    direction?: 'forward' | 'inverse' | 'two-way'
+  }) {
+    const pair = connectorCardPair.value
+    if (!pair || !pair.fromType) return
+    const name = input.name.trim()
+    if (!name) return
+
+    const direction = input.direction ?? relationDirectionMode.value ?? 'forward'
+    const ownerType = clone(direction === 'inverse' && pair.toType ? pair.toType : pair.fromType)
+    const targetType = direction === 'inverse' ? pair.fromType : pair.toType
+    const reverseName = input.reverseName?.trim() || undefined
+
+    const existing = ownerType.properties.find(
+      (p): p is RelationPropertyDef => p.kind === 'relation' && p.name.toLowerCase() === name.toLowerCase(),
+    )
+
+    if (existing) {
+      let changed = false
+      if (reverseName && existing.reverseName !== reverseName) {
+        existing.reverseName = reverseName
+        changed = true
+      }
+      if (targetType && existing.targetTypeIds.length > 0 && !existing.targetTypeIds.includes(targetType.id)) {
+        existing.targetTypeIds.push(targetType.id)
+        changed = true
+      }
+      if (changed) {
+        const savedType = await api.saveType(ownerType)
+        replaceType(savedType)
+      }
+      await assignConnectorRelation(existing.id, direction)
+      return
+    }
+
+    const newProp: RelationPropertyDef = {
+      id: newId(),
+      name,
+      kind: 'relation',
+      targetTypeIds: input.restrictToTargetType && targetType ? [targetType.id] : [],
+      multiple: input.multiple,
+      ...(reverseName ? { reverseName } : {}),
+    }
+    ownerType.properties.push(newProp)
+    const savedType = await api.saveType(ownerType)
+    replaceType(savedType)
+    await assignConnectorRelation(newProp.id, direction)
+  }
+
+  function flipSelectedConnectorDirection() {
+    const s = selectedConnector.value
+    if (!s) return
+    const oldEndX = s.x + s.width
+    const oldEndY = s.y + s.height
+    s.x = oldEndX
+    s.y = oldEndY
+    s.width = -s.width
+    s.height = -s.height
+    const tmpAnchor = s.startAnchor
+    s.startAnchor = s.endAnchor
+    s.endAnchor = tmpAnchor
+    const tmpOri = s.startOrientation
+    s.startOrientation = s.endOrientation
+    s.endOrientation = tmpOri
+    if (s.midOffset !== undefined) {
+      const ori = s.startOrientation ?? 'horizontal'
+      s.midOffset = ori === 'horizontal' ? s.midOffset - s.width : s.midOffset - s.height
+    }
+    syncAnchoredConnectors()
+    pushHistory()
+    notifyChange()
+  }
+
+  function toggleRelationPropertyOnCard(connector?: ShapeElement) {
+    const s = connector || selectedConnector.value
+    if (!s?.relation) return
+    const info = getConnectorRelationInfo(s)
+    if (!info?.ownerCardId) return
+    const card = cards.value.find((c) => c.id === info.ownerCardId)
+    if (!card) return
+    const current = card.showProperties ? [...card.showProperties] : []
+    const idx = current.indexOf(s.relation.propertyId)
+    const willShow = idx < 0
+    if (willShow) {
+      current.push(s.relation.propertyId)
+      if (card.height < 140) {
+        card.height = Math.max(card.height, 120 + current.length * 22)
+      }
+    } else {
+      current.splice(idx, 1)
+    }
+    card.showProperties = current
+
+    if (s.relation.twoWay && info.targetCardId) {
+      const targetCard = cards.value.find((c) => c.id === info.targetCardId)
+      if (targetCard) {
+        const tCurrent = targetCard.showProperties ? [...targetCard.showProperties] : []
+        const tIdx = tCurrent.indexOf(s.relation.propertyId)
+        if (willShow && tIdx < 0) {
+          tCurrent.push(s.relation.propertyId)
+          if (targetCard.height < 140) {
+            targetCard.height = Math.max(targetCard.height, 120 + tCurrent.length * 22)
+          }
+        } else if (!willShow && tIdx >= 0) {
+          tCurrent.splice(tIdx, 1)
+        }
+        targetCard.showProperties = tCurrent
+      }
+    }
+
+    syncAnchoredConnectors()
+    void nextTick(() => syncAnchoredConnectors())
+    pushHistory()
+    notifyChange()
+  }
+
+  function reconcileConnectorRelationAfterResize(s: ShapeElement) {
+    if (!isLine(s) || !s.relation) return
+    const startCard = cards.value.find((c) => c.id === anchorTargetId(s.startAnchor))
+    const endCard = cards.value.find((c) => c.id === anchorTargetId(s.endAnchor))
+    if (!startCard || !endCard) {
+      void unlinkConnectorRelation(s.id, true)
+      return
+    }
+    const pairObjects = new Set([startCard.objectId, endCard.objectId])
+    if (!pairObjects.has(s.relation.ownerObjectId) || !pairObjects.has(s.relation.targetObjectId)) {
+      void unlinkConnectorRelation(s.id, true)
+    }
+  }
+
   return {
     selected,
     isSelected,
@@ -1373,5 +1979,18 @@ export function useWhiteboardSelection(opts: UseWhiteboardSelectionOptions) {
     setCardContentMode,
     toggleCardShowContent,
     toggleCardProperty,
+    selectedConnector,
+    connectorCardPair,
+    connectorRelationOptions,
+    getConnectorRelationInfo,
+    selectedConnectorRelationInfo,
+    relationDirectionMode,
+    setRelationDirectionMode,
+    assignConnectorRelation,
+    unlinkConnectorRelation,
+    createAndAssignConnectorRelation,
+    flipSelectedConnectorDirection,
+    toggleRelationPropertyOnCard,
+    reconcileConnectorRelationAfterResize,
   }
 }

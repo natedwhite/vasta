@@ -1,11 +1,12 @@
 <script setup lang="ts">
 // Read-only miniature of a whiteboard, shown where one is embedded in a page or gallery.
-import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, useAttrs, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import type { Id, ObjectRecord, ObjectSummary } from '@vasta/core'
 import AppIcon from '../AppIcon.vue'
 import { api } from '../../lib/api.ts'
 import { onChange } from '../../lib/events.ts'
+import { requestSummaries } from '../../lib/state.ts'
 import { getConnectorGeometry, getShapeFill, getStrokeDash, isLine, shapePath, stickyStyle } from './shapes.ts'
 import type { WhiteboardData, WhiteboardScene } from './types.ts'
 import WhiteboardObjectCard from './WhiteboardObjectCard.vue'
@@ -81,6 +82,16 @@ const data = computed<WhiteboardData | null>(() => {
   }
 })
 
+watch(
+  () => data.value?.cards,
+  (cards) => {
+    if (cards?.length) {
+      requestSummaries(cards.map((c) => c.objectId))
+    }
+  },
+  { immediate: true },
+)
+
 function path(points: { x: number; y: number }[]) {
   return points.map((p, i) => `${i ? 'L' : 'M'}${p.x} ${p.y}`).join(' ')
 }
@@ -155,6 +166,13 @@ function onSceneSelect(val: string) {
   emit('selectScene', val)
 }
 
+const attrs = useAttrs()
+const rootStyle = computed(() => {
+  const cls = String(attrs.class || '')
+  if (cls.includes('aspect-') || cls.includes('h-') || cls.includes('max-h-')) return undefined
+  return box.value.w && box.value.h ? { aspectRatio: `${box.value.w} / ${box.value.h}` } : undefined
+})
+
 function handleClick() {
   if (!props.interactive) return
   selected.value = true
@@ -173,6 +191,7 @@ function open() {
       interactive ? 'cursor-pointer hover:border-line-strong' : '',
       selected ? 'ring-2 ring-primary ring-offset-2 border-primary' : '',
     ]"
+    :style="rootStyle"
     data-whiteboard-embed
     @click="handleClick"
     @dblclick="open"
@@ -246,11 +265,33 @@ function open() {
         :key="c.id"
         :transform="c.rotation ? `rotate(${c.rotation} ${c.x + c.width / 2} ${c.y + c.height / 2})` : undefined"
       >
-        <foreignObject :x="c.x" :y="c.y" :width="c.width" :height="Math.max(c.height, 400)" class="overflow-visible">
-          <div xmlns="http://www.w3.org/1999/xhtml" class="relative h-full w-full overflow-visible">
+        <rect
+          :x="c.x"
+          :y="c.y"
+          :width="c.width"
+          :height="c.height"
+          rx="12"
+          fill="var(--color-surface, #ffffff)"
+          stroke="var(--color-line, #e2e8f0)"
+          stroke-width="1.5"
+        />
+        <foreignObject
+          :x="c.x"
+          :y="c.y"
+          :width="c.width"
+          :height="c.height"
+          class="overflow-hidden"
+          style="overflow: hidden;"
+        >
+          <div
+            xmlns="http://www.w3.org/1999/xhtml"
+            class="h-full w-full overflow-hidden"
+            style="width: 100%; height: 100%; box-sizing: border-box; overflow: hidden;"
+          >
             <WhiteboardObjectCard
-              :card="{ ...c, x: 0, y: 0, rotation: 0 }"
+              :card="c"
               :interactive="false"
+              :embedded="true"
             />
           </div>
         </foreignObject>

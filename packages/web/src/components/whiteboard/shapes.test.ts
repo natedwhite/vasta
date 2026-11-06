@@ -1,9 +1,9 @@
 import { describe, expect, it } from 'vitest'
-import { getConnectorGeometry, getOrthogonalMidPoint } from './shapes.ts'
+import { getAnchorPoint, getAllAnchorPoints, getConnectorGeometry, getOrthogonalMidPoint, type SnapTarget } from './shapes.ts'
 import type { ShapeElement } from './types.ts'
 
 describe('Whiteboard Connector Geometry', () => {
-  it('offsets arrow termination to the outer edge when snapped to an object side', () => {
+  it('touches the outer edge of an object when snapped without leaving a gap', () => {
     const snappedArrow: ShapeElement = {
       id: 'conn-1',
       type: 'arrow',
@@ -20,10 +20,9 @@ describe('Whiteboard Connector Geometry', () => {
     }
 
     const geo = getConnectorGeometry(snappedArrow)
-    // End anchor is at side 'left', meaning the target is to the right of x2 (300).
-    // Outward direction is -x (left), so end tip should be offset outward from 300 to ~296.5.
+    // Snapped arrow termination touches the object's outer edge cleanly at 298.5 without extending inside 300
     expect(geo.endHead).toBeDefined()
-    expect(geo.endHead).toContain('M 296.5 100')
+    expect(geo.endHead).toContain('M 298.5 100')
   })
 
   it('does not offset dot termination when snapped, keeping the dot centered on the edge', () => {
@@ -252,5 +251,73 @@ describe('Whiteboard Connector Geometry', () => {
     const expectedY = 0.25 * arrowGeo.shaftStart.y + 0.5 * curved.controlPoint!.y + 0.25 * arrowGeo.shaftEnd.y
     expect(arrowGeo.midPoint!.x).toBeCloseTo(expectedX, 3)
     expect(arrowGeo.midPoint!.y).toBeCloseTo(expectedY, 3)
+  })
+
+  it('computes labelPoint along the longer leg for 1-turn elbow connectors and at midPoint for 2-turn/curved connectors', () => {
+    const elbow: ShapeElement = {
+      id: 'conn-elbow-label',
+      type: 'line',
+      color: '#000000',
+      curvature: 'orthogonal',
+      arrowHead: 'none',
+      x: 100,
+      y: 100,
+      width: 240,
+      height: 80,
+      startOrientation: 'horizontal',
+      endOrientation: 'vertical',
+    }
+    const geo = getConnectorGeometry(elbow)
+    // Horizontal leg is 240px (from 100 to 340 at y=100), vertical leg is 80px (from 100 to 180 at x=340)
+    // labelPoint should be at the midpoint of the longer horizontal leg: (220, 100)
+    expect(geo.labelPoint).toEqual({ x: 220, y: 100 })
+  })
+
+  it('calculates triangle anchor points at the middle of each edge and at the center', () => {
+    const triangle: SnapTarget = {
+      id: 'tri-1',
+      kind: 'shape',
+      shapeType: 'triangle',
+      x: 100,
+      y: 100,
+      width: 200,
+      height: 100,
+    }
+
+    // Top apex: (cx, minY) = (200, 100)
+    expect(getAnchorPoint(triangle, 'top')).toEqual({ x: 200, y: 100 })
+    // Left slanted edge midpoint: (100 + 200*0.25, 100 + 50) = (150, 150)
+    expect(getAnchorPoint(triangle, 'left')).toEqual({ x: 150, y: 150 })
+    // Right slanted edge midpoint: (100 + 200*0.75, 100 + 50) = (250, 150)
+    expect(getAnchorPoint(triangle, 'right')).toEqual({ x: 250, y: 150 })
+    // Bottom edge midpoint: (200, 200)
+    expect(getAnchorPoint(triangle, 'bottom')).toEqual({ x: 200, y: 200 })
+    // Middle of shape: (200, 150)
+    expect(getAnchorPoint(triangle, 'center')).toEqual({ x: 200, y: 150 })
+
+    const all = getAllAnchorPoints(triangle)
+    expect(all.map((a) => a.side)).toEqual(['top', 'right', 'bottom', 'left', 'center'])
+  })
+
+  it('draws a direct vertical shaft when orthogonal connector endpoints are vertically aligned without looping', () => {
+    const verticalArrow: ShapeElement = {
+      id: 'conn-vert',
+      type: 'arrow',
+      curvature: 'orthogonal',
+      color: '#000000',
+      x: 200,
+      y: 100,
+      width: 0,
+      height: 120,
+      startOrientation: 'vertical',
+      endOrientation: 'vertical',
+      startAnchor: { targetId: 'card-1', side: 'bottom' },
+      endAnchor: { targetId: 'card-2', side: 'top' },
+    }
+
+    const geo = getConnectorGeometry(verticalArrow)
+    // Shaft should be a straight vertical line without detour corners
+    expect(geo.shaftPath).toBe('M 200 101.5 L 200 204.5')
+    expect(geo.endHead).toBeDefined()
   })
 })

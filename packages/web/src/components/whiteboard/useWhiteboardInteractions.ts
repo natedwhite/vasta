@@ -117,6 +117,8 @@ export function useWhiteboardInteractions(opts: {
     deleteSelected,
     duplicateSelected,
     selectAll,
+    unlinkConnectorRelation,
+    reconcileConnectorRelationAfterResize,
   } = selectionState
 
   // Sticky Text Editing -----------------------------------------------------
@@ -190,6 +192,11 @@ export function useWhiteboardInteractions(opts: {
     const before = strokes.value.length + shapes.value.length
     strokes.value = strokes.value.filter((s) => distToPolyline(pt, s.points) > tol + s.width / 2)
     const erasedShapeIds = new Set<string>()
+    for (const s of shapes.value) {
+      if (shapeHit(s, pt, tol) && isLine(s) && s.relation) {
+        void unlinkConnectorRelation(s.id, true)
+      }
+    }
     shapes.value = shapes.value.filter((s) => {
       const hit = shapeHit(s, pt, tol)
       if (hit && !isLine(s)) erasedShapeIds.add(s.id)
@@ -687,7 +694,7 @@ export function useWhiteboardInteractions(opts: {
               },
             }
           : {}),
-        zIndex: getMaxZIndex() + 1,
+        zIndex: 1,
       }
     } else if (tool === 'shape2d') {
       setMode('shape')
@@ -937,6 +944,9 @@ export function useWhiteboardInteractions(opts: {
         const shape = currentShape.value
         currentShape.value = null
         if (shape && Math.max(Math.abs(shape.width), Math.abs(shape.height)) * zoom.value >= 6) {
+          if (isLine(shape)) {
+            shape.zIndex = 1
+          }
           shapes.value.push(shape)
           selected.value = [keyOf('shape', shape.id)]
           pushHistory()
@@ -966,7 +976,14 @@ export function useWhiteboardInteractions(opts: {
         else if (tapSticky) startEditing(tapSticky)
         tapSticky = undefined
         break
-      case 'resize':
+      case 'resize': {
+        const found = findItem(resizeKey)
+        if (found?.kind === 'shape' && isLine(found.item as ShapeElement)) {
+          reconcileConnectorRelationAfterResize(found.item as ShapeElement)
+        }
+        pushHistory()
+        break
+      }
       case 'rotate':
         pushHistory()
         break

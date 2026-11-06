@@ -39,7 +39,7 @@ export type LineTermination = 'none' | 'arrow' | 'dot'
 export type ShapeFill = 'none' | 'tint' | 'white' | 'solid'
 
 export type AnchorTargetKind = 'card' | 'sticky' | 'shape'
-export type AnchorSide = 'top' | 'bottom' | 'left' | 'right'
+export type AnchorSide = 'top' | 'bottom' | 'left' | 'right' | 'center'
 
 export interface ConnectorAnchor {
   targetId?: string
@@ -47,6 +47,17 @@ export interface ConnectorAnchor {
   /** Kept for backward compatibility with card-only anchors */
   cardId?: string
   side?: AnchorSide
+}
+
+export interface ConnectorRelationBinding {
+  /** ID of the RelationPropertyDef on `ownerObjectId`'s type */
+  propertyId: Id
+  /** The object ID whose `props[propertyId]` holds `targetObjectId` */
+  ownerObjectId: Id
+  /** The target object ID stored inside `ownerObject.props[propertyId]` */
+  targetObjectId: Id
+  /** Whether this connection represents a bidirectional (two-way) relation */
+  twoWay?: boolean
 }
 
 export interface ShapeElement {
@@ -74,6 +85,8 @@ export interface ShapeElement {
   text?: string
   startAnchor?: ConnectorAnchor
   endAnchor?: ConnectorAnchor
+  /** Optional Vasta relation binding when this connector links two Object Cards */
+  relation?: ConnectorRelationBinding
   zIndex?: number
   rotation?: number
 }

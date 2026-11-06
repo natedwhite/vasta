@@ -1,7 +1,18 @@
 import { describe, expect, it } from 'vitest'
 import { Y } from '@vasta/editor-schema/yjs'
-import { addBoardElements, readBoard } from '../src/board.ts'
-import { MermaidError, boardToJsonCanvas, graphToElements, jsonCanvasToElements, layeredLayout, parseMermaidFlowchart, spotAfter } from '../src/board-graph.ts'
+import { addBoardElements, elementsToWhiteboardData, readBoard, whiteboardDataToElements } from '../src/board.ts'
+import {
+  MermaidError,
+  boardToJsonCanvas,
+  boardToMermaid,
+  boardToSvg,
+  graphToElements,
+  jsonCanvasToElements,
+  layeredLayout,
+  layoutBoardElements,
+  parseMermaidFlowchart,
+  spotAfter,
+} from '../src/board-graph.ts'
 
 const counter = () => {
   let n = 0
@@ -58,7 +69,7 @@ describe('Mermaid flowcharts', () => {
     const graph = parseMermaidFlowchart('graph LR\n A[Plan] --> B[Groceries]')
     const elements = graphToElements(graph, { x: 100, y: 50 }, counter(), (label) => (label === 'Groceries' ? 'obj-1' : undefined))
     expect(elements.map((e) => e.kind)).toEqual(['shape', 'card', 'arrow'])
-    expect(elements[0]).toMatchObject({ x: 100, y: 50, text: 'Plan' })
+    expect(elements[0]).toMatchObject({ x: 100, y: 80, text: 'Plan' })
     expect(elements[1]).toMatchObject({ objectId: 'obj-1' })
     expect(elements[2]).toMatchObject({ from: 'id1', to: 'id2' })
   })
@@ -118,5 +129,62 @@ describe('JSON Canvas', () => {
   it('puts new content to the right of the board', () => {
     expect(spotAfter([])).toEqual({ x: 0, y: 0 })
     expect(spotAfter(readBoard(board().doc))).toEqual({ x: 710, y: -50 })
+  })
+
+  it('minimizes crossings in layered layouts and parses Mermaid subgraphs & edge styles', () => {
+    // A1 -> B2 and A2 -> B1 when B1 is declared before B2: barycenter sweep reorders layer 1 so B2 is left of B1
+    const pos = layeredLayout(
+      ['A1', 'A2', 'B1', 'B2'],
+      [
+        { from: 'A1', to: 'B2' },
+        { from: 'A2', to: 'B1' },
+      ],
+      'down'
+    )
+    expect(pos.get('A1')!.x).toBeLessThan(pos.get('A2')!.x)
+    expect(pos.get('B2')!.x).toBeLessThan(pos.get('B1')!.x)
+
+    const sgGraph = parseMermaidFlowchart(`flowchart TD
+      subgraph backend [Backend Services]
+        API[API Gateway] -.->|auth| DB[(Database)]
+      end
+      Client <--> API`)
+    expect(sgGraph.subgraphs).toEqual([{ id: 'backend', title: 'Backend Services', nodeRefs: ['API', 'DB'] }])
+    expect(sgGraph.edges).toEqual([
+      { from: 'API', to: 'DB', label: 'auth', dashed: true },
+      { from: 'Client', to: 'API', heads: 'both' },
+    ])
+    const els = graphToElements(sgGraph, { x: 0, y: 0 }, counter())
+    expect(els.find((e) => e.kind === 'frame')).toMatchObject({ kind: 'frame', title: 'Backend Services' })
+  })
+
+  it('exports boards to Mermaid and SVG, and round-trips through interactive WhiteboardData', () => {
+    const { doc } = board()
+    const elements = readBoard(doc)
+    const mmd = boardToMermaid(elements, (id) => (id === 'o1' ? 'Plan' : undefined))
+    expect(mmd).toContain('subgraph SG1 ["Week"]')
+    expect(mmd).toContain('["Plan"]')
+    expect(mmd).toContain('(["Hello"])')
+    expect(mmd).toContain('-->|"then"|')
+
+    const svg = boardToSvg(elements, { objectTitle: () => 'Plan' })
+    expect(svg).toContain('<svg ')
+    expect(svg).toContain('Plan')
+    expect(svg).toContain('Hello')
+
+    const wbData = elementsToWhiteboardData(elements, undefined, () => ({ title: 'Plan', typeId: 'page', typeName: 'Page' }))
+    expect(wbData.cards).toHaveLength(1)
+    expect(wbData.stickies).toHaveLength(1)
+    expect(wbData.scenes).toHaveLength(1)
+    expect(wbData.shapes.filter((s) => s.type === 'arrow')).toHaveLength(1)
+    const connector = wbData.shapes.find((s) => s.type === 'arrow')!
+    expect(connector.startAnchor?.targetId).toBe(wbData.cards[0]!.id)
+    expect(connector.endAnchor?.targetId).toBe(wbData.stickies[0]!.id)
+
+    const roundTripped = whiteboardDataToElements(wbData)
+    expect(roundTripped.map((e) => e.kind)).toEqual(['frame', 'arrow', 'card', 'sticky', 'stroke'])
+
+    const laid = layoutBoardElements(roundTripped, 'right')
+    expect(laid[wbData.cards[0]!.id]!.x).toBeLessThan(laid[wbData.stickies[0]!.id]!.x)
   })
 })

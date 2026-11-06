@@ -1,7 +1,7 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
-import type { ColorName, DocNode, Id, ObjectRecord, ObjectSummary, PropertyDef } from '@vasta/core'
+import type { Backlink, ColorName, DocNode, Id, ObjectRecord, ObjectSummary, PropertyDef } from '@vasta/core'
 import { api } from '../../lib/api.ts'
 import { chip, iconTextClasses } from '../../lib/colors.ts'
 import { onChange } from '../../lib/events.ts'
@@ -20,16 +20,19 @@ const props = withDefaults(
     card: ObjectCardElement
     selected?: boolean
     interactive?: boolean
+    embedded?: boolean
   }>(),
   {
     selected: false,
     interactive: true,
+    embedded: false,
   },
 )
 
 const emit = defineEmits<{
   open: [objectId: Id]
   remove: [cardId: string]
+  heightChange: [cardId: string, height: number]
 }>()
 
 const router = useRouter()
@@ -66,6 +69,45 @@ const shownProperties = computed<PropertyDef[]>(() => {
 function propertyValue(prop: PropertyDef) {
   return summary.value?.props?.[prop.id]
 }
+
+const reverseLinks = ref<Backlink[]>([])
+async function loadReverseRelations() {
+  try {
+    const list = (await api.backlinks(props.card.objectId)).filter((l) => l.kind === 'relation')
+    primeSummaries(list.map((l) => l.object))
+    reverseLinks.value = list
+  } catch {
+    reverseLinks.value = []
+  }
+}
+
+watch(() => props.card.objectId, () => void loadReverseRelations(), { immediate: true })
+
+interface ReverseRelationRow {
+  key: string
+  name: string
+  objects: ObjectSummary[]
+}
+
+const shownReverseRelations = computed<ReverseRelationRow[]>(() => {
+  const showIds = props.card.showProperties
+  if (!showIds || !showIds.length || !reverseLinks.value.length) return []
+  const byKey = new Map<string, ReverseRelationRow>()
+  for (const link of reverseLinks.value) {
+    const fromType = typesById.value.get(link.object.typeId)
+    const def = fromType?.properties.find((p) => p.id === link.via)
+    if (def?.kind !== 'relation') continue
+    if (!showIds.includes(def.id)) continue
+    const key = `${link.object.typeId}/${def.id}`
+    const displayName = def.reverseName?.trim() || `${fromType?.name || 'Object'} · ${def.name}`
+    const row = byKey.get(key) ?? { key, name: displayName, objects: [] }
+    if (!row.objects.some((o) => o.id === link.object.id)) {
+      row.objects.push(link.object)
+    }
+    byKey.set(key, row)
+  }
+  return [...byKey.values()]
+})
 
 const effectiveContentMode = computed<CardContentMode>(() => {
   if (props.card.contentMode) return props.card.contentMode
@@ -144,6 +186,7 @@ watch(
 )
 
 let changeTimer: ReturnType<typeof setTimeout> | undefined
+let revTimer: ReturnType<typeof setTimeout> | undefined
 const stopChange = onChange((event) => {
   if (event.kind !== 'object') return
   if (event.id === props.card.objectId && effectiveContentMode.value === 'full') {
@@ -153,11 +196,14 @@ const stopChange = onChange((event) => {
     clearTimeout(changeTimer)
     changeTimer = setTimeout(() => void loadQueryResults(), 350)
   }
+  clearTimeout(revTimer)
+  revTimer = setTimeout(() => void loadReverseRelations(), 400)
 })
 
 onBeforeUnmount(() => {
   stopChange()
   clearTimeout(changeTimer)
+  clearTimeout(revTimer)
 })
 
 function openObject(id: Id) {
@@ -171,21 +217,54 @@ function openObject(id: Id) {
 function getResultType(item: ObjectSummary) {
   return typesById.value.get(item.typeId)
 }
+
+const cardEl = ref<HTMLElement | null>(null)
+let resizeObserver: ResizeObserver | null = null
+
+onMounted(() => {
+  if (props.embedded || !cardEl.value || typeof ResizeObserver === 'undefined') return
+  resizeObserver = new ResizeObserver((entries) => {
+    for (const entry of entries) {
+      const h = Math.round(entry.borderBoxSize?.[0]?.blockSize ?? cardEl.value?.offsetHeight ?? 0)
+      if (h > 0 && Math.abs(props.card.height - h) > 1) {
+        if (effectiveContentMode.value !== 'full' && !isQueryCard.value) {
+          props.card.height = h
+          emit('heightChange', props.card.id, h)
+        }
+      }
+    }
+  })
+  resizeObserver.observe(cardEl.value)
+})
+
+onBeforeUnmount(() => {
+  resizeObserver?.disconnect()
+})
 </script>
 
 <template>
   <div
-    class="absolute flex flex-col rounded-xl border border-line bg-surface p-3 shadow-md pointer-events-none overflow-hidden"
-    :style="{
-      left: `${card.x}px`,
-      top: `${card.y}px`,
-      width: `${card.width}px`,
-      height: effectiveContentMode === 'full' || isQueryCard ? `${card.height}px` : undefined,
-      minHeight: `${card.height}px`,
-      transform: card.rotation ? `rotate(${card.rotation}deg)` : undefined,
-      transformOrigin: 'center center',
-      boxShadow: selected ? '0 0 0 2px #3b82f6' : undefined,
-    }"
+    ref="cardEl"
+    class="flex flex-col rounded-xl border border-line bg-surface p-3 shadow-md pointer-events-none overflow-hidden"
+    :class="embedded ? 'w-full h-full' : 'absolute'"
+    :style="
+      embedded
+        ? {
+            width: '100%',
+            height: '100%',
+            boxSizing: 'border-box',
+          }
+        : {
+            left: `${card.x}px`,
+            top: `${card.y}px`,
+            width: `${card.width}px`,
+            height: effectiveContentMode === 'full' || isQueryCard ? `${card.height}px` : undefined,
+            minHeight: `${card.height}px`,
+            transform: card.rotation ? `rotate(${card.rotation}deg)` : undefined,
+            transformOrigin: 'center center',
+            boxShadow: selected ? '0 0 0 2px #3b82f6' : undefined,
+          }
+    "
   >
     <!-- Header Row: Type Chip + Action Buttons -->
     <div class="flex shrink-0 items-center justify-between gap-1 text-xs">
@@ -231,9 +310,9 @@ function getResultType(item: ObjectSummary) {
       {{ title }}
     </h4>
 
-    <!-- Selected Custom / System Properties -->
+    <!-- Selected Custom / System Properties + Reverse Relations -->
     <div
-      v-if="shownProperties.length"
+      v-if="shownProperties.length || shownReverseRelations.length"
       class="my-1 flex shrink-0 flex-col gap-1 border-t border-line/60 pt-1.5 text-xs text-ink-soft"
     >
       <div
@@ -244,6 +323,17 @@ function getResultType(item: ObjectSummary) {
         <span class="truncate text-[11px] text-ink-faint">{{ prop.name }}:</span>
         <div class="truncate text-right text-[11px]">
           <PropertyDisplay :def="prop" :value="propertyValue(prop)" :object="summary" />
+        </div>
+      </div>
+
+      <div
+        v-for="rev in shownReverseRelations"
+        :key="rev.key"
+        class="flex items-center justify-between gap-2"
+      >
+        <span class="truncate text-[11px] text-ink-faint">{{ rev.name }}:</span>
+        <div class="truncate text-right text-[11px] flex items-center gap-1 justify-end">
+          <ObjectChip v-for="o in rev.objects" :key="o.id" :id="o.id" />
         </div>
       </div>
     </div>

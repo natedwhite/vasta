@@ -1,6 +1,7 @@
 <script setup lang="ts">
-import { inject } from 'vue'
+import { computed, inject, ref, watch } from 'vue'
 import AppIcon from '../AppIcon.vue'
+import { chip } from '../../lib/colors.ts'
 import { kindIcon } from '../../lib/properties.ts'
 import { WHITEBOARD_CTX } from './context.ts'
 import { STICKY_COLORS } from './shapes.ts'
@@ -82,7 +83,75 @@ const {
   selectedCardAvailableProperties,
   isCardPropertyShown,
   toggleCardProperty,
+  isOnlySelectedLine,
+  selectedConnector,
+  connectorCardPair,
+  connectorRelationOptions,
+  selectedConnectorRelationInfo,
+  relationDirectionMode,
+  setRelationDirectionMode,
+  assignConnectorRelation,
+  unlinkConnectorRelation,
+  createAndAssignConnectorRelation,
+  toggleRelationPropertyOnCard,
+  getCardTitle,
+  getCardTypeName,
+  getCardTypeColor,
 } = inject(WHITEBOARD_CTX)!
+
+const newRelName = ref('')
+const newRelRestrictType = ref(true)
+const newRelMultiple = ref(true)
+const newRelReverseName = ref('')
+const creatingRelation = ref(false)
+
+watch(
+  () => [activePopover.value, connectorCardPair.value?.connector.id] as const,
+  ([pop]) => {
+    if (pop === 'selection-relation') {
+      newRelName.value = ''
+      newRelReverseName.value = ''
+      newRelRestrictType.value = true
+      newRelMultiple.value = true
+    }
+  },
+)
+
+const hasUnboundExistingRelation = computed(() =>
+  connectorRelationOptions.value.some((o) => o.alreadyInVasta && !o.isAssignedToConnector),
+)
+
+const displayedRelationOptions = computed(() => {
+  const mode = relationDirectionMode.value
+  if (mode === 'two-way') {
+    return connectorRelationOptions.value.filter((o) => o.direction === 'forward')
+  } else if (mode === 'inverse') {
+    return connectorRelationOptions.value.filter((o) => o.direction === 'inverse')
+  } else {
+    return connectorRelationOptions.value.filter((o) => o.direction === 'forward')
+  }
+})
+
+async function submitNewRelation() {
+  if (!newRelName.value.trim() || creatingRelation.value) return
+  creatingRelation.value = true
+  try {
+    const isTwoWay = relationDirectionMode.value === 'two-way'
+    const name = newRelName.value.trim()
+    const rev = newRelReverseName.value.trim() || (isTwoWay ? name : undefined)
+    await createAndAssignConnectorRelation({
+      name,
+      restrictToTargetType: newRelRestrictType.value,
+      multiple: newRelMultiple.value,
+      reverseName: rev,
+      direction: relationDirectionMode.value,
+    })
+    newRelName.value = ''
+    newRelReverseName.value = ''
+  } finally {
+    creatingRelation.value = false
+  }
+}
 
 function isClosestOrEqual(val: number | undefined, target: number, list: number[]): boolean {
   if (val === undefined || val === null) return target === list[0]
@@ -289,6 +358,42 @@ function isCustomColorActive(current: string | undefined, palette: string[]): bo
     >
       <span class="h-3.5 w-3.5 rounded-full ring-1 ring-black/15 shadow-xs" :style="{ backgroundColor: selectionPrimaryColor }" />
       <AppIcon fallback="ph:line-segments" :size="15" />
+    </button>
+
+    <!-- 1D CONNECTOR: Vasta Relation Trigger -->
+    <button
+      v-if="isOnlySelectedLine"
+      class="relative flex h-7 items-center gap-1.5 px-2.5 rounded-lg font-medium active:scale-95 transition-all"
+      :class="[
+        activePopover === 'selection-relation'
+          ? 'bg-primary text-white shadow-xs'
+          : selectedConnectorRelationInfo
+            ? 'bg-primary/15 text-primary ring-1 ring-primary/35 hover:bg-primary/20'
+            : connectorCardPair
+              ? 'text-ink hover:bg-hover border border-line/80'
+              : 'text-ink-faint hover:bg-hover hover:text-ink-soft',
+      ]"
+      :title="
+        selectedConnectorRelationInfo
+          ? `Linked Relation: ${selectedConnectorRelationInfo.ownerTitle} · ${selectedConnectorRelationInfo.propertyName} → ${selectedConnectorRelationInfo.targetTitle}`
+          : connectorCardPair
+            ? 'Link this connector to a Vasta relation property'
+            : 'Snap both ends to Object Cards to link as a Vasta relation'
+      "
+      @click.stop="togglePopover('selection-relation')"
+    >
+      <AppIcon :fallback="selectedConnectorRelationInfo || connectorCardPair ? 'ph:link-simple' : 'ph:link-simple-break'" :size="14" />
+      <span v-if="selectedConnectorRelationInfo" class="max-w-28 truncate text-[11px] font-semibold">
+        {{ selectedConnectorRelationInfo.displayLabel }}
+      </span>
+      <span v-else-if="connectorCardPair" class="text-[11px]">
+        Link Relation
+      </span>
+      <span
+        v-if="!selectedConnectorRelationInfo && hasUnboundExistingRelation"
+        class="h-2 w-2 rounded-full bg-primary ring-2 ring-surface"
+        title="These objects already have a relation in Vasta"
+      />
     </button>
 
     <!-- STICKY NOTE: Edit Text Trigger -->
@@ -887,6 +992,263 @@ function isCustomColorActive(current: string | undefined, palette: string[]): bo
             <AppIcon :fallback="kindIcon(prop.kind)" :size="14" class="text-ink-soft shrink-0" />
             <span class="truncate">{{ prop.name }}</span>
           </label>
+        </div>
+      </template>
+    </template>
+
+    <!-- 8. Selection Connector-as-Relation Popover -->
+    <template v-else-if="activePopover === 'selection-relation' && isOnlySelectedLine">
+      <!-- Unattached connector -->
+      <div v-if="!connectorCardPair" class="flex flex-col gap-2 p-1 text-xs">
+        <div class="flex items-center gap-1.5 font-bold text-ink text-[11px] uppercase tracking-wider">
+          <AppIcon fallback="ph:link-simple" :size="14" class="text-primary" />
+          <span>Object Relation</span>
+        </div>
+        <p class="text-ink-soft leading-snug">
+          Snap both ends of this line to object cards to link them.
+        </p>
+        <div class="flex items-center justify-between text-[11px] pt-1.5 border-t border-line/60">
+          <span :class="selectedConnector?.startAnchor?.targetKind === 'card' ? 'text-emerald-600 dark:text-emerald-400 font-medium' : 'text-ink-faint'">
+            Start: {{ selectedConnector?.startAnchor?.targetKind === 'card' ? 'Card ✓' : 'Unattached' }}
+          </span>
+          <span :class="selectedConnector?.endAnchor?.targetKind === 'card' ? 'text-emerald-600 dark:text-emerald-400 font-medium' : 'text-ink-faint'">
+            End: {{ selectedConnector?.endAnchor?.targetKind === 'card' ? 'Card ✓' : 'Unattached' }}
+          </span>
+        </div>
+      </div>
+
+      <!-- Connected to two cards -->
+      <template v-else>
+        <!-- Header: Card A ⇄ Card B -->
+        <div class="flex items-center justify-between gap-2 px-0.5 text-xs">
+          <div class="flex items-center gap-1.5 min-w-0 flex-1">
+            <span
+              class="inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] font-semibold shrink-0"
+              :class="chip(getCardTypeColor(connectorCardPair.fromCard) as any)"
+            >
+              {{ getCardTypeName(connectorCardPair.fromCard) }}
+            </span>
+            <span class="truncate font-medium text-ink" :title="getCardTitle(connectorCardPair.fromCard)">
+              {{ getCardTitle(connectorCardPair.fromCard) }}
+            </span>
+          </div>
+
+          <span class="text-ink-faint shrink-0">⇄</span>
+
+          <div class="flex items-center gap-1.5 min-w-0 flex-1 justify-end text-right">
+            <span class="truncate font-medium text-ink" :title="getCardTitle(connectorCardPair.toCard)">
+              {{ getCardTitle(connectorCardPair.toCard) }}
+            </span>
+            <span
+              class="inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] font-semibold shrink-0"
+              :class="chip(getCardTypeColor(connectorCardPair.toCard) as any)"
+            >
+              {{ getCardTypeName(connectorCardPair.toCard) }}
+            </span>
+          </div>
+        </div>
+
+        <!-- Direction Segmented Control: [ A ──▶ B ] [ 2-Way ⇄ ] [ A ◀── B ] -->
+        <div class="grid grid-cols-3 gap-1 rounded-lg bg-hover/70 p-0.5 text-xs font-medium">
+          <button
+            type="button"
+            class="flex items-center justify-center gap-1 rounded-md py-1 transition-all"
+            :class="
+              relationDirectionMode === 'forward'
+                ? 'bg-surface text-primary shadow-2xs font-semibold'
+                : 'text-ink-soft hover:text-ink'
+            "
+            title="One-way relation from start to end object"
+            @click.stop="setRelationDirectionMode('forward')"
+          >
+            <AppIcon fallback="ph:arrow-right" :size="12" />
+            <span>A ──▶ B</span>
+          </button>
+
+          <button
+            type="button"
+            class="flex items-center justify-center gap-1 rounded-md py-1 transition-all"
+            :class="
+              relationDirectionMode === 'two-way'
+                ? 'bg-surface text-primary shadow-2xs font-semibold'
+                : 'text-ink-soft hover:text-ink'
+            "
+            title="Two-way mutual relation between both objects"
+            @click.stop="setRelationDirectionMode('two-way')"
+          >
+            <AppIcon fallback="ph:arrows-left-right" :size="12" />
+            <span>2-Way ⇄</span>
+          </button>
+
+          <button
+            type="button"
+            class="flex items-center justify-center gap-1 rounded-md py-1 transition-all"
+            :class="
+              relationDirectionMode === 'inverse'
+                ? 'bg-surface text-primary shadow-2xs font-semibold'
+                : 'text-ink-soft hover:text-ink'
+            "
+            title="One-way relation from end to start object"
+            @click.stop="setRelationDirectionMode('inverse')"
+          >
+            <AppIcon fallback="ph:arrow-left" :size="12" />
+            <span>A ◀── B</span>
+          </button>
+        </div>
+
+        <!-- Currently Active Link Banner -->
+        <div
+          v-if="selectedConnectorRelationInfo"
+          class="flex items-center justify-between gap-2 rounded-lg border border-primary/25 bg-primary/5 px-2.5 py-1.5"
+        >
+          <div class="flex items-center gap-2 min-w-0">
+            <AppIcon
+              :fallback="selectedConnectorRelationInfo.twoWay ? 'ph:arrows-left-right' : 'ph:link-simple'"
+              :size="13"
+              class="text-primary shrink-0"
+            />
+            <div class="min-w-0">
+              <div class="text-xs font-semibold text-ink truncate">
+                {{ selectedConnectorRelationInfo.displayLabel }}
+              </div>
+              <label class="flex items-center gap-1 text-[11px] text-ink-soft cursor-pointer select-none">
+                <input
+                  type="checkbox"
+                  :checked="selectedConnectorRelationInfo.shownOnOwnerCard"
+                  class="rounded border-line text-primary focus:ring-primary h-3 w-3"
+                  @change="toggleRelationPropertyOnCard()"
+                />
+                <span>{{ selectedConnectorRelationInfo.twoWay ? 'Show on cards' : 'Show on card' }}</span>
+              </label>
+            </div>
+          </div>
+
+          <button
+            type="button"
+            class="inline-flex shrink-0 items-center gap-1 rounded px-1.5 py-0.5 text-[11px] font-medium text-red-600 hover:bg-red-50 dark:hover:bg-red-950/40 transition-colors"
+            title="Unlink this relation and keep arrow visual-only"
+            @click.stop="unlinkConnectorRelation()"
+          >
+            <AppIcon fallback="ph:link-break" :size="12" />
+            <span>Unlink</span>
+          </button>
+        </div>
+
+        <!-- Available Relations List -->
+        <div v-if="displayedRelationOptions.length" class="flex flex-col gap-1">
+          <span class="text-[10px] font-bold uppercase tracking-wider text-ink-faint">
+            {{ relationDirectionMode === 'two-way' ? 'Select 2-Way Relation' : 'Relations' }}
+          </span>
+          <div class="flex flex-col gap-1 max-h-36 overflow-y-auto pr-0.5">
+            <button
+              v-for="opt in displayedRelationOptions"
+              :key="opt.key"
+              type="button"
+              class="flex items-center justify-between gap-2 rounded-lg border px-2.5 py-1.5 text-left transition-all text-xs"
+              :class="
+                opt.isAssignedToConnector
+                  ? 'border-primary bg-primary/10 text-primary font-medium'
+                  : 'border-line hover:border-primary/40 hover:bg-hover text-ink'
+              "
+              @click.stop="assignConnectorRelation(opt.prop.id, relationDirectionMode)"
+            >
+              <div class="flex items-center gap-2 min-w-0 flex-1">
+                <AppIcon
+                  :fallback="relationDirectionMode === 'two-way' ? 'ph:arrows-left-right' : opt.direction === 'forward' ? 'ph:arrow-right' : 'ph:arrow-left'"
+                  :size="12"
+                  :class="opt.isAssignedToConnector ? 'text-primary' : 'text-ink-soft'"
+                  class="shrink-0"
+                />
+                <span class="truncate">
+                  {{ relationDirectionMode === 'two-way' ? (opt.twoWayDisplayName || opt.displayName) : opt.displayName }}
+                </span>
+              </div>
+
+              <div class="flex items-center gap-1 shrink-0">
+                <span
+                  v-if="opt.isAssignedToConnector"
+                  class="flex items-center gap-0.5 rounded bg-primary px-1.5 py-0.5 text-[9px] font-semibold text-white"
+                >
+                  <AppIcon fallback="ph:check" :size="10" />
+                  <span>Active</span>
+                </span>
+                <span
+                  v-else-if="opt.alreadyInVasta"
+                  class="rounded bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20 px-1 py-0.2 text-[9px] font-medium"
+                >
+                  In Vasta
+                </span>
+              </div>
+            </button>
+          </div>
+        </div>
+
+        <!-- Inline New Relation -->
+        <div v-if="relationDirectionMode === 'two-way'" class="flex flex-col gap-1.5 pt-1.5 border-t border-line/60">
+          <span class="text-[10px] font-bold uppercase tracking-wider text-ink-faint">
+            New 2-Way Relation
+          </span>
+          <div class="grid grid-cols-2 gap-1.5">
+            <div class="flex flex-col gap-0.5 min-w-0">
+              <span class="text-[10px] text-ink-faint truncate">
+                On {{ getCardTypeName(connectorCardPair.fromCard) }}:
+              </span>
+              <input
+                v-model="newRelName"
+                type="text"
+                placeholder="e.g. Blocks"
+                class="w-full rounded-lg border border-line bg-surface px-2 py-1 text-xs text-ink outline-none focus:border-primary placeholder:text-ink-faint"
+                @keydown.enter.stop.prevent="submitNewRelation"
+              />
+            </div>
+
+            <div class="flex flex-col gap-0.5 min-w-0">
+              <span class="text-[10px] text-ink-faint truncate">
+                On {{ getCardTypeName(connectorCardPair.toCard) }}:
+              </span>
+              <input
+                v-model="newRelReverseName"
+                type="text"
+                :placeholder="newRelName.trim() ? `(${newRelName.trim()})` : 'e.g. Blocked by'"
+                class="w-full rounded-lg border border-line bg-surface px-2 py-1 text-xs text-ink outline-none focus:border-primary placeholder:text-ink-faint"
+                @keydown.enter.stop.prevent="submitNewRelation"
+              />
+            </div>
+          </div>
+
+          <button
+            type="button"
+            :disabled="!newRelName.trim() || creatingRelation"
+            class="flex items-center justify-center gap-1 rounded-lg bg-primary py-1 text-xs font-semibold text-white shadow-2xs hover:bg-primary/90 disabled:opacity-40 transition-all"
+            @click.stop="submitNewRelation"
+          >
+            <AppIcon fallback="ph:plus-bold" :size="11" />
+            <span>Add 2-Way Relation</span>
+          </button>
+        </div>
+
+        <div v-else class="flex flex-col gap-1.5 pt-1.5 border-t border-line/60">
+          <span class="text-[10px] font-bold uppercase tracking-wider text-ink-faint">
+            New Relation
+          </span>
+          <div class="flex items-center gap-1">
+            <input
+              v-model="newRelName"
+              type="text"
+              :placeholder="`New property on ${getCardTypeName(relationDirectionMode === 'inverse' ? connectorCardPair.toCard : connectorCardPair.fromCard)}…`"
+              class="min-w-0 flex-1 rounded-lg border border-line bg-surface px-2.5 py-1 text-xs text-ink outline-none focus:border-primary placeholder:text-ink-faint"
+              @keydown.enter.stop.prevent="submitNewRelation"
+            />
+            <button
+              type="button"
+              :disabled="!newRelName.trim() || creatingRelation"
+              class="shrink-0 flex items-center gap-1 rounded-lg bg-primary px-2.5 py-1 text-xs font-semibold text-white shadow-2xs hover:bg-primary/90 disabled:opacity-40 transition-all"
+              @click.stop="submitNewRelation"
+            >
+              <AppIcon fallback="ph:plus-bold" :size="11" />
+              <span>Add</span>
+            </button>
+          </div>
         </div>
       </template>
     </template>

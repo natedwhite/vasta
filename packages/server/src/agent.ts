@@ -80,24 +80,32 @@ import {
   NODE_SIZE,
   addBoardElements,
   boardToJsonCanvas,
+  boardToMermaid,
+  boardToSvg,
+  ensureBoardMap,
   graphToElements,
   gridBoxes,
   isAttached,
   isPlaced,
   isShapeName,
   jsonCanvasToElements,
+  layoutBoardElements,
   parseMermaidFlowchart,
   readBoard,
   removeBoardElements,
   sendToBack,
   spotAfter,
+  syncBoardToWhiteboard,
   updateBoardElements,
   type BoardElement,
   type ArrowHeads,
   type ArrowPath,
   type BoardPatch,
   type CardView,
+  type Direction,
   type NewBoardElement,
+  type WbCardMeta,
+  type WbRelationBinding,
 } from '@vasta/core'
 import { docToMarkdown, markdownToDoc } from '@vasta/core/markdown'
 import type { NodeStore } from '@vasta/core/node'
@@ -116,6 +124,7 @@ export interface BoardAddInput {
   ref?: string
   kind: 'card' | 'text' | 'sticky' | 'shape' | 'frame'
   object?: string
+  view?: string
   text?: string
   shape?: string
   title?: string
@@ -130,6 +139,7 @@ export interface ArrowStyleInput {
   path?: string
   heads?: string
   dashed?: boolean
+  relation?: string | null
 }
 
 /** An arrow's look checked; defaults ("straight", "end", not dashed) are left out (or cleared, for a change). */
@@ -414,7 +424,7 @@ export class AgentTools {
       ...(commentsOf(object).length ? { comments: commentsOf(object).map((c) => ({ by: this.personName(c.author), at: c.at, text: c.text })) } : {}),
       ...this.foodFacts(object),
       text,
-      ...(type?.system === 'whiteboard' ? { board: `${readBoard(this.store.loadText(object.id) ?? new Y.Doc()).length} elements; read them with get_board, change them with edit_board` } : {}),
+      ...(type?.system === 'whiteboard' ? { board: `${readBoard(this.store.loadText(object.id) ?? new Y.Doc(), object).length} elements; read them with get_board, change them with edit_board` } : {}),
       ...(backlinks.length ? { backlinks } : {}),
     }
   }
@@ -439,11 +449,127 @@ export class AgentTools {
     return found.id
   }
 
+  private resolveBoardRelation(fromObjectId: Id, toObjectId: Id, relationQuery: string): WbRelationBinding & { propertyName: string } {
+    const fromObj = this.store.getObject(fromObjectId)
+    const toObj = this.store.getObject(toObjectId)
+    if (!fromObj || !toObj) throw new AgentError('both arrow endpoints must be valid objects to bind a relation')
+    const fromType = this.store.getType(fromObj.typeId)
+    const toType = this.store.getType(toObj.typeId)
+    const q = fold(relationQuery)
+
+    // 1. Direct relation property on source object's type
+    const direct = (fromType?.properties ?? []).find(
+      (p) =>
+        p.kind === 'relation' &&
+        (p.id === relationQuery || fold(p.name) === q) &&
+        (!p.targetTypeIds?.length || p.targetTypeIds.includes(toObj.typeId))
+    )
+    if (direct && direct.kind === 'relation') {
+      return {
+        propertyId: direct.id,
+        propertyName: direct.name,
+        ownerObjectId: fromObj.id,
+        targetObjectId: toObj.id,
+        ...(direct.reverseName?.trim() ? { twoWay: true } : {}),
+      }
+    }
+
+    // 2. Reverse relation property on target object's type (stored on target object)
+    const reverse = (toType?.properties ?? []).find(
+      (p) =>
+        p.kind === 'relation' &&
+        (p.id === relationQuery || fold(p.name) === q || (p.reverseName && fold(p.reverseName) === q)) &&
+        (!p.targetTypeIds?.length || p.targetTypeIds.includes(fromObj.typeId))
+    )
+    if (reverse && reverse.kind === 'relation') {
+      return {
+        propertyId: reverse.id,
+        propertyName: reverse.reverseName?.trim() || reverse.name,
+        ownerObjectId: toObj.id,
+        targetObjectId: fromObj.id,
+        ...(reverse.reverseName?.trim() ? { twoWay: true } : {}),
+      }
+    }
+
+    const available = [
+      ...(fromType?.properties ?? []).filter((p) => p.kind === 'relation').map((p) => p.name),
+      ...(toType?.properties ?? []).filter((p) => p.kind === 'relation').map((p) => p.reverseName?.trim() || p.name),
+    ]
+    throw new AgentError(
+      `unknown relation "${relationQuery}" between "${fromObj.title}" (${fromType?.name ?? 'Object'}) and "${toObj.title}" (${toType?.name ?? 'Object'})${available.length ? ` (available: ${available.join(', ')})` : ''}`
+    )
+  }
+
+  private applyBoardRelationLink(binding: WbRelationBinding, link: boolean) {
+    const owner = this.store.getObject(binding.ownerObjectId)
+    if (!owner || owner.deletedAt) return
+    const type = this.store.getType(owner.typeId)
+    const def = type?.properties.find((p) => p.id === binding.propertyId && p.kind === 'relation')
+    if (!def || def.kind !== 'relation') return
+
+    const propVal = owner.props[def.id]
+    const existing = propVal?.kind === 'relation' ? [...propVal.value] : []
+    let nextIds: Id[]
+    if (link) {
+      if (existing.includes(binding.targetObjectId)) return
+      nextIds = def.multiple === false ? [binding.targetObjectId] : [...existing, binding.targetObjectId]
+    } else {
+      if (!existing.includes(binding.targetObjectId)) return
+      nextIds = existing.filter((id) => id !== binding.targetObjectId)
+    }
+
+    const nextProps = { ...owner.props }
+    if (nextIds.length > 0) nextProps[def.id] = { kind: 'relation', value: nextIds }
+    else delete nextProps[def.id]
+
+    const saved = this.store.putObject({ ...owner, props: nextProps, updatedAt: this.options.now() })
+    this.changed(saved)
+  }
+
+  private cardMetaFor = (objectId: Id): WbCardMeta | undefined => {
+    const obj = this.store.getObject(objectId)
+    if (!obj) return undefined
+    const type = this.store.getType(obj.typeId)
+    return {
+      title: obj.title || 'Untitled',
+      typeId: obj.typeId,
+      typeName: type?.name || 'Page',
+      ...(type?.color ? { typeColor: type.color } : {}),
+      ...(type?.icon?.value ? { typeIcon: type.icon.value } : {}),
+    }
+  }
+
   /** What an agent sees of an element (a stroke's ink left out; boxes in board coordinates). */
   private boardElement(element: BoardElement, all: Map<Id, BoardElement>) {
     if (element.kind === 'arrow') {
       const { id, from, to, label, color, relation, path, heads, dashed, mentioned } = element
-      return { id, kind: 'arrow', from, to, ...{ label, color, relation, path, heads, ...(dashed ? { dashed } : {}), ...(mentioned ? { mentioned } : {}) } }
+      let relationLabel = relation
+      if (relation) {
+        const fromEl = all.get(from)
+        const toEl = all.get(to)
+        if (fromEl?.kind === 'card' && toEl?.kind === 'card') {
+          try {
+            relationLabel = this.resolveBoardRelation(fromEl.objectId, toEl.objectId, relation).propertyName
+          } catch {
+            relationLabel = relation
+          }
+        }
+      }
+      return {
+        id,
+        kind: 'arrow',
+        from,
+        to,
+        ...{
+          label,
+          color,
+          ...(relationLabel ? { relation: relationLabel } : {}),
+          path,
+          heads,
+          ...(dashed ? { dashed } : {}),
+          ...(mentioned ? { mentioned } : {}),
+        },
+      }
     }
     let box = { x: element.x, y: element.y, w: element.w, h: element.h }
     if (isAttached(element)) {
@@ -467,11 +593,53 @@ export class AgentTools {
     }
   }
 
-  /** A board's elements and arrows; "canvas" gives it as a JSON Canvas (jsoncanvas.org) instead. */
-  getBoard(id: Id, format: 'elements' | 'canvas' = 'elements') {
+  /**
+   * A board's elements and arrows; "canvas" gives it as a JSON Canvas (jsoncanvas.org),
+   * "mermaid" as a Mermaid flowchart, and "svg" as a standalone vector SVG diagram.
+   */
+  getBoard(id: Id, format: 'elements' | 'canvas' | 'mermaid' | 'svg' = 'elements') {
     const object = this.whiteboard(id)
-    const elements = readBoard(this.store.loadText(id) ?? new Y.Doc())
-    if (format === 'canvas') return boardToJsonCanvas(elements, (objectId) => (this.titleOf(objectId) !== undefined ? { title: this.titleOf(objectId)!, url: this.url(objectId) } : undefined))
+    const rawElements = readBoard(this.store.loadText(id) ?? new Y.Doc(), object)
+    const rawMap = new Map(rawElements.map((e) => [e.id, e]))
+    const elements = rawElements.map((e) => {
+      if (e.kind !== 'arrow' || !e.relation) return e
+      const fromEl = rawMap.get(e.from)
+      const toEl = rawMap.get(e.to)
+      if (fromEl?.kind === 'card' && toEl?.kind === 'card') {
+        try {
+          const resolved = this.resolveBoardRelation(fromEl.objectId, toEl.objectId, e.relation)
+          return { ...e, relation: resolved.propertyName }
+        } catch {
+          return e
+        }
+      }
+      return e
+    })
+    if (format === 'canvas') {
+      return boardToJsonCanvas(elements, (objectId) => (this.titleOf(objectId) !== undefined ? { title: this.titleOf(objectId)!, url: this.url(objectId) } : undefined))
+    }
+    if (format === 'mermaid') {
+      return {
+        id: object.id,
+        title: object.title,
+        format: 'mermaid' as const,
+        mermaid: boardToMermaid(elements, (objectId) => this.titleOf(objectId)),
+      }
+    }
+    if (format === 'svg') {
+      return {
+        id: object.id,
+        title: object.title,
+        format: 'svg' as const,
+        svg: boardToSvg(elements, {
+          objectTitle: (objectId) => this.titleOf(objectId),
+          objectTypeName: (objectId) => {
+            const o = this.store.getObject(objectId)
+            return o ? this.store.getType(o.typeId)?.name : undefined
+          },
+        }),
+      }
+    }
     const all = new Map(elements.map((e) => [e.id, e]))
     return {
       id: object.id,
@@ -485,7 +653,7 @@ export class AgentTools {
   /**
    * Change a board in one step: add elements (placed where given, else in a grid to the right of
    * what is there) and arrows between new ("ref") or existing elements, change or remove
-   * elements, add a Mermaid flowchart or a JSON Canvas. Returns the board, and the ids given to refs.
+   * elements, add a Mermaid flowchart or a JSON Canvas, or auto-layout the board. Returns the board, and the ids given to refs.
    */
   editBoard(input: {
     id: Id
@@ -495,10 +663,12 @@ export class AgentTools {
     remove?: Id[]
     mermaid?: string
     canvas?: unknown
+    layout?: Direction | 'grid'
   }) {
     const object = this.whiteboard(input.id)
     const doc = this.store.loadText(object.id) ?? new Y.Doc()
-    const existing = readBoard(doc)
+    ensureBoardMap(doc, object)
+    const existing = readBoard(doc, object)
     const known = new Map(existing.map((e) => [e.id, e]))
     const refs: Record<string, Id> = {}
     const color = (value: string | undefined | null) => {
@@ -516,14 +686,30 @@ export class AgentTools {
         if (refs[item.ref]) throw new AgentError(`ref "${item.ref}" is used twice`)
         refs[item.ref] = id
       }
-      const usual = item.kind === 'sticky' ? { w: 180, h: 180 } : item.kind === 'frame' ? { w: 640, h: 420 } : item.kind === 'text' ? { w: 240, h: 40 } : item.kind === 'card' ? { w: 260, h: 150 } : NODE_SIZE
+      const usual =
+        item.kind === 'sticky'
+          ? { w: 180, h: 180 }
+          : item.kind === 'frame'
+            ? { w: 640, h: 420 }
+            : item.kind === 'text'
+              ? { w: 240, h: 40 }
+              : item.kind === 'card'
+                ? item.view === 'compact'
+                  ? { w: 220, h: 90 }
+                  : item.view === 'embed'
+                    ? { w: 300, h: 220 }
+                    : { w: 260, h: 160 }
+                : NODE_SIZE
       const size = { w: Math.max(24, Math.round(item.w ?? usual.w)), h: Math.max(24, Math.round(item.h ?? usual.h)) }
       const look = color(item.color) ? { color: color(item.color)! } : {}
       let element: NewBoardElement & { id: Id }
       const box = { x: Math.round(item.x ?? 0), y: Math.round(item.y ?? 0), ...size }
       if (item.kind === 'card') {
         if (!item.object) throw new AgentError('a card needs "object" (an object id or exact title)')
-        element = { id, kind: 'card', objectId: this.boardObject(object.spaceId, item.object), ...box }
+        if (item.view !== undefined && !CARD_VIEWS.includes(item.view as CardView))
+          throw new AgentError(`unknown card view "${item.view}" (${CARD_VIEWS.join(', ')})`)
+        const view = item.view && item.view !== 'card' ? (item.view as CardView) : undefined
+        element = { id, kind: 'card', objectId: this.boardObject(object.spaceId, item.object), ...box, ...(view ? { view } : {}) }
       } else if (item.kind === 'shape') {
         if (item.shape !== undefined && !isShapeName(item.shape)) throw new AgentError(`unknown shape "${item.shape}"`)
         element = { id, kind: 'shape', shape: item.shape ?? 'rectangle', text: item.text ?? '', ...box, ...look }
@@ -533,19 +719,69 @@ export class AgentTools {
       additions.push(element)
       if (item.x === undefined || item.y === undefined) unplaced.push({ element, size })
     }
-    const spots = gridBoxes(unplaced.map((u) => u.size), spotAfter([...existing, ...additions.filter((a) => !unplaced.some((u) => u.element === a))] as BoardElement[]))
-    unplaced.forEach((u, i) => Object.assign(u.element, spots[i]))
 
+    // If unplaced new elements are connected by arrows in `input.arrows`, lay them out as a directed graph instead of a flat grid!
+    const unplacedById = new Map(unplaced.map((u) => [u.element.id, u]))
     const resolve = (key: string) => {
       const id = refs[key] ?? (known.has(key) ? key : undefined)
       if (!id) throw new AgentError(`no element "${key}" (an id from get_board, or a ref of an added element)`)
       return id
     }
+    const resolvedArrows: { from: Id; to: Id; raw: NonNullable<typeof input.arrows>[number] }[] = []
     for (const arrow of input.arrows ?? []) {
       const from = resolve(arrow.from)
       const to = resolve(arrow.to)
       if (from === to) throw new AgentError('an arrow needs two different elements')
-      additions.push({ id: randomUUID(), kind: 'arrow', from, to, ...(arrow.label ? { label: arrow.label } : {}), ...(color(arrow.color) ? { color: color(arrow.color)! } : {}), ...arrowStyle(arrow) })
+      resolvedArrows.push({ from, to, raw: arrow })
+    }
+
+    const startCorner = spotAfter([...existing, ...additions.filter((a) => !unplacedById.has(a.id))] as BoardElement[])
+    const unplacedArrows = resolvedArrows.filter((a) => unplacedById.has(a.from) && unplacedById.has(a.to))
+    if (unplaced.length > 0 && unplacedArrows.length > 0) {
+      const layoutDir: Direction = input.layout && input.layout !== 'grid' ? input.layout : 'down'
+      const tempNodes: BoardElement[] = unplaced.map((u) => ({ ...u.element, rank: 'm', x: 0, y: 0, w: u.size.w, h: u.size.h }) as BoardElement)
+      const tempArrows: BoardElement[] = unplacedArrows.map((a, idx) => ({ id: `a_${idx}`, rank: 'z', kind: 'arrow', from: a.from, to: a.to }))
+      const laid = layoutBoardElements([...tempNodes, ...tempArrows], layoutDir, startCorner)
+      for (const u of unplaced) {
+        const p = laid[u.element.id]
+        if (p) Object.assign(u.element, { x: p.x, y: p.y })
+      }
+    } else if (unplaced.length > 0) {
+      const spots = gridBoxes(
+        unplaced.map((u) => u.size),
+        startCorner
+      )
+      unplaced.forEach((u, i) => Object.assign(u.element, spots[i]))
+    }
+
+    const cardObjectOf = (elId: Id): Id | undefined => {
+      const ex = known.get(elId)
+      if (ex?.kind === 'card') return ex.objectId
+      const added = additions.find((a) => a.id === elId)
+      if (added?.kind === 'card') return added.objectId
+      return undefined
+    }
+
+    for (const { from, to, raw: arrow } of resolvedArrows) {
+      let relationId: string | undefined
+      if (arrow.relation) {
+        const fromObjId = cardObjectOf(from)
+        const toObjId = cardObjectOf(to)
+        if (!fromObjId || !toObjId) throw new AgentError('arrow "relation" can only be set between two object cards')
+        const binding = this.resolveBoardRelation(fromObjId, toObjId, arrow.relation)
+        this.applyBoardRelationLink(binding, true)
+        relationId = binding.propertyId
+      }
+      additions.push({
+        id: randomUUID(),
+        kind: 'arrow',
+        from,
+        to,
+        ...(arrow.label ? { label: arrow.label } : {}),
+        ...(color(arrow.color) ? { color: color(arrow.color)! } : {}),
+        ...(relationId ? { relation: relationId } : {}),
+        ...arrowStyle(arrow),
+      })
     }
 
     // A flowchart or a canvas goes after everything else.
@@ -591,6 +827,26 @@ export class AgentTools {
       const patch: BoardPatch = {}
       if (element.kind === 'arrow') {
         if (change.label !== undefined) patch.label = change.label || undefined
+        if (change.relation !== undefined) {
+          const fromObjId = cardObjectOf(element.from)
+          const toObjId = cardObjectOf(element.to)
+          if (!fromObjId || !toObjId) throw new AgentError('arrow "relation" can only be set between two object cards')
+          if (change.relation === null || change.relation === '') {
+            if (element.relation) {
+              try {
+                const oldBinding = this.resolveBoardRelation(fromObjId, toObjId, element.relation)
+                this.applyBoardRelationLink(oldBinding, false)
+              } catch {
+                // ignore if property was removed
+              }
+            }
+            patch.relation = undefined
+          } else {
+            const binding = this.resolveBoardRelation(fromObjId, toObjId, change.relation)
+            this.applyBoardRelationLink(binding, true)
+            patch.relation = binding.propertyId
+          }
+        }
         Object.assign(patch, arrowStyle(change, true))
       } else {
         for (const key of ['x', 'y', 'w', 'h'] as const) if (change[key] !== undefined && !isAttached(element)) patch[key] = Math.round(change[key])
@@ -616,9 +872,26 @@ export class AgentTools {
       if (frames.length) sendToBack(doc, frames)
       if (Object.keys(patches).length) updateBoardElements(doc, patches)
       if (input.remove?.length) removeBoardElements(doc, input.remove)
+      if (input.layout) {
+        const relayoutPatches = layoutBoardElements(readBoard(doc), input.layout)
+        if (Object.keys(relayoutPatches).length) updateBoardElements(doc, relayoutPatches)
+      }
       return ids
     })
-    const saved = this.store.putObject({ ...object, updatedAt: this.options.now() }, undefined, doc)
+
+    const wbData = syncBoardToWhiteboard(doc, object, this.cardMetaFor, (fromObjId, toObjId, relKey) => {
+      try {
+        return this.resolveBoardRelation(fromObjId, toObjId, relKey)
+      } catch {
+        return undefined
+      }
+    })
+    const nextProps = {
+      ...object.props,
+      whiteboardData: { kind: 'text' as const, value: JSON.stringify(wbData) },
+    }
+
+    const saved = this.store.putObject({ ...object, props: nextProps, updatedAt: this.options.now() }, undefined, doc)
     this.changed(saved)
     return { ...this.getBoard(saved.id), ...(Object.keys(refs).length ? { refs } : {}) }
   }

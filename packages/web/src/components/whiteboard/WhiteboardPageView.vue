@@ -21,6 +21,16 @@ import PropertyDisplay from '../PropertyDisplay.vue'
 import PropertyValueEditor from '../PropertyValueEditor.vue'
 import { tagFromPath } from '../../lib/actions.ts'
 import { api } from '../../lib/api.ts'
+import {
+  downloadBlob,
+  downloadTextFile,
+  exportWhiteboardToJsonCanvas,
+  exportWhiteboardToMermaid,
+  exportWhiteboardToPng,
+  exportWhiteboardToSvg,
+  jsonCanvasToWhiteboardPatch,
+  mermaidToWhiteboardPatch,
+} from '../../lib/board-actions.ts'
 import { iconTextClasses } from '../../lib/colors.ts'
 import { clone } from '../../lib/clone.ts'
 import { PROPERTY_KINDS, kindIcon, newPropertyDef } from '../../lib/properties.ts'
@@ -214,6 +224,110 @@ function onDeleteScene(id: string) {
 function onAddNewScene() {
   showScenesModal.value = false
   canvasRef.value?.startDefiningScene()
+}
+
+// Diagram, Layout & Export Controls
+const actionsMenuOpen = ref(false)
+const actionsMenuAnchor = ref<HTMLElement | null>(null)
+const showMermaidModal = ref(false)
+const mermaidInput = ref(`flowchart TD\n  A[Idea] --> B{Ready?}\n  B -->|Yes| C[Build]\n  B -->|No| D[Refine]`)
+const mermaidError = ref<string | null>(null)
+const canvasFileInput = ref<HTMLInputElement | null>(null)
+
+function safeBoardFilename(ext: string) {
+  const base = (title.value.trim() || 'Whiteboard').replace(/[\\/:*?"<>|]+/g, '-').slice(0, 80)
+  return `${base}.${ext}`
+}
+
+function onAutoLayout(dir: 'down' | 'right' | 'grid') {
+  actionsMenuOpen.value = false
+  canvasRef.value?.autoLayout(dir)
+  showToast(dir === 'grid' ? 'Arranged in grid ✨' : dir === 'right' ? 'Laid out left-to-right ✨' : 'Laid out top-to-bottom ✨')
+}
+
+function openMermaidModal() {
+  actionsMenuOpen.value = false
+  mermaidError.value = null
+  showMermaidModal.value = true
+}
+
+async function onInsertMermaid() {
+  mermaidError.value = null
+  try {
+    const currentData = canvasRef.value?.getCurrentData()
+    const patch = await mermaidToWhiteboardPatch(mermaidInput.value, currentData)
+    canvasRef.value?.appendElements(patch)
+    showMermaidModal.value = false
+    showToast('Flowchart added ✨')
+  } catch (err) {
+    mermaidError.value = (err as Error).message
+  }
+}
+
+function onExportSvg() {
+  actionsMenuOpen.value = false
+  const data = canvasRef.value?.getCurrentData()
+  if (!data) return
+  const svg = exportWhiteboardToSvg(data)
+  downloadTextFile(svg, safeBoardFilename('svg'), 'image/svg+xml;charset=utf-8')
+  showToast('Exported SVG')
+}
+
+async function onExportPng() {
+  actionsMenuOpen.value = false
+  const data = canvasRef.value?.getCurrentData()
+  if (!data) return
+  try {
+    const blob = await exportWhiteboardToPng(data, 2)
+    downloadBlob(blob, safeBoardFilename('png'))
+    showToast('Exported PNG')
+  } catch (err) {
+    lastError.value = (err as Error).message
+  }
+}
+
+function onExportCanvas() {
+  actionsMenuOpen.value = false
+  const data = canvasRef.value?.getCurrentData()
+  if (!data) return
+  const json = exportWhiteboardToJsonCanvas(data)
+  downloadTextFile(json, safeBoardFilename('canvas'), 'application/json;charset=utf-8')
+  showToast('Exported .canvas')
+}
+
+async function onCopyMermaid() {
+  actionsMenuOpen.value = false
+  const data = canvasRef.value?.getCurrentData()
+  if (!data) return
+  const mmd = exportWhiteboardToMermaid(data)
+  try {
+    await navigator.clipboard.writeText(mmd)
+    showToast('Copied Mermaid flowchart 📋')
+  } catch {
+    downloadTextFile(mmd, safeBoardFilename('mmd'))
+    showToast('Downloaded Mermaid flowchart')
+  }
+}
+
+function triggerImportCanvas() {
+  actionsMenuOpen.value = false
+  canvasFileInput.value?.click()
+}
+
+async function onImportCanvasFile(e: Event) {
+  const input = e.target as HTMLInputElement
+  const file = input.files?.[0]
+  input.value = ''
+  if (!file) return
+  try {
+    const text = await file.text()
+    const currentData = canvasRef.value?.getCurrentData()
+    const patch = await jsonCanvasToWhiteboardPatch(text, currentData)
+    canvasRef.value?.appendElements(patch)
+    showToast('Imported JSON Canvas ✨')
+  } catch (err) {
+    lastError.value = (err as Error).message
+  }
 }
 
 // Initial whiteboard data loaded from object.props.whiteboardData (supports PropertyValue object or legacy string)
@@ -425,6 +539,96 @@ function goBack() {
             {{ scenesList.length }}
           </span>
         </button>
+
+        <!-- Diagram, Layout & Export Menu -->
+        <button
+          ref="actionsMenuAnchor"
+          class="flex items-center gap-1.5 rounded-lg px-2.5 py-1 text-xs font-medium transition-colors border"
+          :class="actionsMenuOpen ? 'border-primary bg-primary/10 text-primary' : 'border-line bg-hover text-ink-soft hover:text-ink'"
+          title="Diagrams, Auto-Layout & Export"
+          @click="actionsMenuOpen = !actionsMenuOpen"
+        >
+          <AppIcon fallback="ph:flow-arrow" :size="14" />
+          <span class="max-md:hidden">Board</span>
+          <AppIcon fallback="ph:caret-down" :size="11" class="opacity-60" />
+        </button>
+
+        <PopoverMenu v-model:open="actionsMenuOpen" :anchor="actionsMenuAnchor" width="14.5rem">
+          <div class="px-2 py-1 text-[10px] font-semibold uppercase tracking-wider text-ink-faint">Layout & Diagrams</div>
+          <button
+            class="flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-xs text-ink hover:bg-hover"
+            @click="openMermaidModal"
+          >
+            <AppIcon fallback="ph:git-branch" :size="14" class="text-primary" />
+            <span>Add Mermaid Flowchart…</span>
+          </button>
+          <button
+            class="flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-xs text-ink hover:bg-hover"
+            @click="onAutoLayout('down')"
+          >
+            <AppIcon fallback="ph:tree-structure" :size="14" class="text-ink-soft" />
+            <span>Auto-Layout (Top → Down)</span>
+          </button>
+          <button
+            class="flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-xs text-ink hover:bg-hover"
+            @click="onAutoLayout('right')"
+          >
+            <AppIcon fallback="ph:arrows-out-line-horizontal" :size="14" class="text-ink-soft" />
+            <span>Auto-Layout (Left → Right)</span>
+          </button>
+          <button
+            class="flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-xs text-ink hover:bg-hover"
+            @click="onAutoLayout('grid')"
+          >
+            <AppIcon fallback="ph:squares-four" :size="14" class="text-ink-soft" />
+            <span>Arrange in Grid</span>
+          </button>
+
+          <div class="my-1 border-t border-line/60" />
+          <div class="px-2 py-1 text-[10px] font-semibold uppercase tracking-wider text-ink-faint">Export & Import</div>
+          <button
+            class="flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-xs text-ink hover:bg-hover"
+            @click="onExportSvg"
+          >
+            <AppIcon fallback="ph:bezier-curve" :size="14" class="text-ink-soft" />
+            <span>Export as SVG (.svg)</span>
+          </button>
+          <button
+            class="flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-xs text-ink hover:bg-hover"
+            @click="onExportPng"
+          >
+            <AppIcon fallback="ph:image" :size="14" class="text-ink-soft" />
+            <span>Export as Image (.png)</span>
+          </button>
+          <button
+            class="flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-xs text-ink hover:bg-hover"
+            @click="onExportCanvas"
+          >
+            <AppIcon fallback="ph:file-code" :size="14" class="text-ink-soft" />
+            <span>Export JSON Canvas (.canvas)</span>
+          </button>
+          <button
+            class="flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-xs text-ink hover:bg-hover"
+            @click="onCopyMermaid"
+          >
+            <AppIcon fallback="ph:copy" :size="14" class="text-ink-soft" />
+            <span>Copy as Mermaid Flowchart</span>
+          </button>
+          <button
+            class="flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-xs text-ink hover:bg-hover"
+            @click="triggerImportCanvas"
+          >
+            <AppIcon fallback="ph:upload-simple" :size="14" class="text-ink-soft" />
+            <span>Import JSON Canvas (.canvas)…</span>
+          </button>
+        </PopoverMenu>
+        <input
+          ref="canvasFileInput"
+          type="file"
+          accept=".canvas,application/json"
+          class="hidden"
+          @change="onImportCanvasFile"
+        />
 
         <!-- Properties Drawer Toggle -->
         <button
@@ -720,6 +924,64 @@ function goBack() {
             <AppIcon fallback="ph:plus" :size="14" />
             <span>New Scene</span>
           </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Add Mermaid Flowchart Modal -->
+    <div
+      v-if="showMermaidModal"
+      class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40 backdrop-blur-xs select-none"
+      @click.self="showMermaidModal = false"
+    >
+      <div class="flex flex-col w-full max-w-lg rounded-2xl border border-line bg-surface p-5 shadow-2xl space-y-4">
+        <div class="flex items-center justify-between border-b border-line pb-3">
+          <div class="flex items-center gap-2">
+            <div class="flex h-8 w-8 items-center justify-center rounded-lg bg-primary/10 text-primary">
+              <AppIcon fallback="ph:git-branch" :size="18" />
+            </div>
+            <div>
+              <h3 class="text-sm font-semibold text-ink">Add Mermaid Flowchart</h3>
+              <p class="text-xs text-ink-faint">Nodes matching existing object titles automatically become Vasta Object Cards</p>
+            </div>
+          </div>
+          <button
+            class="rounded-lg p-1 text-ink-soft hover:bg-hover hover:text-ink transition-colors"
+            @click="showMermaidModal = false"
+          >
+            <AppIcon fallback="ph:x" :size="16" />
+          </button>
+        </div>
+
+        <textarea
+          v-model="mermaidInput"
+          rows="7"
+          spellcheck="false"
+          class="w-full rounded-xl border border-line bg-hover/50 p-3 font-mono text-xs text-ink outline-none focus:border-primary"
+          placeholder="flowchart TD&#10;  A[Idea] --> B{Decision}"
+        />
+
+        <div v-if="mermaidError" class="rounded-lg bg-red-500/10 px-3 py-2 text-xs text-red-600 dark:text-red-400">
+          {{ mermaidError }}
+        </div>
+
+        <div class="flex items-center justify-between border-t border-line pt-3">
+          <span class="text-[11px] text-ink-faint">Tip: You can also paste Mermaid code directly on the canvas (⌘V).</span>
+          <div class="flex items-center gap-2">
+            <button
+              class="rounded-lg px-3 py-1.5 text-xs font-medium text-ink-soft hover:bg-hover hover:text-ink"
+              @click="showMermaidModal = false"
+            >
+              Cancel
+            </button>
+            <button
+              class="flex items-center gap-1.5 rounded-lg bg-primary px-3.5 py-1.5 text-xs font-semibold text-white shadow-sm hover:bg-primary/90 transition-all active:scale-95"
+              @click="onInsertMermaid"
+            >
+              <AppIcon fallback="ph:plus" :size="14" />
+              <span>Add to Whiteboard</span>
+            </button>
+          </div>
         </div>
       </div>
     </div>

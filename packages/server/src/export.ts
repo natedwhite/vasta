@@ -190,8 +190,9 @@ export function buildExport(store: NodeStore, spaceId: Id, options: { now: strin
     if (type?.system === 'weblink' && o.media?.url) body.push(`<${o.media.url}>`)
     if (type?.system === 'whiteboard') {
       const ydoc = store.loadText(o.id)
-      if (ydoc) {
-        const canvas = boardToJsonCanvas(readBoard(ydoc), (id) => (paths.has(id) ? { title: titleOf(id) ?? '', url: paths.get(id)! } : undefined))
+      const elements = readBoard(ydoc ?? new Y.Doc(), o)
+      if (ydoc || elements.length) {
+        const canvas = boardToJsonCanvas(elements, (id) => (paths.has(id) ? { title: titleOf(id) ?? '', url: paths.get(id)! } : undefined))
         const canvasPath = path.replace(/\.md$/, '.canvas')
         files.push({ path: canvasPath, data: strToU8(JSON.stringify(canvas, null, 2)) })
         body.push(`[Open the board](${encodeURIComponent(stems.get(o.id)!)}.canvas)`)

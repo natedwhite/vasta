@@ -68,6 +68,7 @@ const player = computed(() => (display.value === 'embed' && type.value?.system =
       :object-id="objectId"
       :object="summary"
       :scene-id="(props.node.attrs.sceneId as string | null)"
+      class="w-full max-h-[36rem]"
       @select-scene="(id) => props.updateAttributes({ sceneId: id })"
     />
 

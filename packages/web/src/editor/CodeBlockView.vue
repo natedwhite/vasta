@@ -3,13 +3,34 @@
 // in it (clicking the diagram puts it there), or while it is empty or cannot be drawn. The code stays
 // in the page, hidden, so the editor and other devices keep editing the same text.
 import { NodeViewContent, NodeViewWrapper, nodeViewProps } from '@tiptap/vue-3'
+import { parseMermaidFlowchart } from '@vasta/core'
 import type { Mounted } from 'pele/lazy'
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { boardFromMermaid } from '../lib/board-actions.ts'
 import { MERMAID, mountDiagram } from '../lib/mermaid.ts'
+import { lastError } from '../lib/state.ts'
+import { router } from '../router.ts'
 
 const props = defineProps(nodeViewProps)
 const isDiagram = computed(() => props.node.attrs.language === MERMAID)
 const text = computed(() => props.node.textContent)
+const canTurnIntoBoard = computed(() => {
+  if (!isDiagram.value || !text.value.trim()) return false
+  try {
+    return parseMermaidFlowchart(text.value).nodes.length > 0
+  } catch {
+    return false
+  }
+})
+
+async function turnIntoBoard() {
+  try {
+    const board = await boardFromMermaid(text.value)
+    await router.push(`/o/${board.id}`)
+  } catch (err) {
+    lastError.value = (err as Error).message
+  }
+}
 
 const canvas = ref<HTMLElement | null>(null)
 const error = ref<string | null>(null)
@@ -72,7 +93,16 @@ function editCode() {
 </script>
 
 <template>
-  <NodeViewWrapper v-if="isDiagram" class="my-2" data-diagram>
+  <NodeViewWrapper v-if="isDiagram" class="group/diagram relative my-2" data-diagram>
+    <button
+      v-if="canTurnIntoBoard && !error"
+      type="button"
+      contenteditable="false"
+      class="absolute top-1.5 right-1.5 z-10 rounded-md bg-surface/90 px-2 py-0.5 text-xs text-ink-soft opacity-0 ring-1 ring-line backdrop-blur-sm transition-opacity group-hover/diagram:opacity-100 hover:bg-hover hover:text-ink"
+      @click.stop="turnIntoBoard"
+    >
+      Turn into whiteboard
+    </button>
     <div
       v-show="text.trim() && !error"
       ref="canvas"

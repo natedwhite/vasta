@@ -310,6 +310,30 @@ describe('MCP endpoint', () => {
     expect(imported.elements.filter((e: { kind: string }) => e.kind === 'card')[0].object.id).toBe(page.id)
     expect(imported.arrows).toHaveLength(canvas.edges.length)
 
+    // Mermaid and SVG formats + interactive whiteboardData sync + auto-layout + relation arrows
+    const asMermaid = await call('get_board', { id: board.id, format: 'mermaid' })
+    expect(asMermaid.mermaid).toContain('flowchart ')
+    expect(asMermaid.mermaid).toContain('Launch plan')
+    const asSvg = await call('get_board', { id: board.id, format: 'svg' })
+    expect(asSvg.svg).toContain('<svg ')
+    const storedBoard = store.getObject(board.id)!
+    expect(storedBoard.props.whiteboardData?.kind).toBe('text')
+
+    const author = await call('create_object', { type: 'Page', title: 'Ursula K. Le Guin' })
+    const book = await call('create_object', { type: 'Book', title: 'Earthsea' })
+    const relBoard = await call('create_object', { type: 'Whiteboard', title: 'Book Map' })
+    const linked = await call('edit_board', {
+      id: relBoard.id,
+      add: [
+        { ref: 'b', kind: 'card', object: book.id },
+        { ref: 'a', kind: 'card', object: author.id },
+      ],
+      arrows: [{ from: 'b', to: 'a', relation: 'Author' }],
+      layout: 'right',
+    })
+    expect(linked.arrows[0].relation).toBe('Author')
+    expect((await call('get_object', { id: book.id })).properties.Author).toEqual([{ id: author.id, title: 'Ursula K. Le Guin' }])
+
     await expect(call('edit_board', { id: page.id, add: [] })).rejects.toThrow('not a whiteboard')
     await expect(call('edit_board', { id: board.id, add: [{ kind: 'card', object: 'Nothing like this' }] })).rejects.toThrow('no object')
     await expect(call('edit_board', { id: board.id, arrows: [{ from: 'x', to: 'y' }] })).rejects.toThrow('no element')

@@ -8,6 +8,12 @@ GitHub release page.
 
 ### Added
 
+- **AI whiteboard tools, complex diagram auto-layout, and multi-format exports.**
+  - **Bidirectional AI & Canvas Sync**: `get_board` and `edit_board` MCP tools (and `vasta board` CLI) now synchronize seamlessly with the interactive whiteboard canvas (`wb_elements`, `wb_meta`, and `whiteboardData`), including live Vasta relation bindings (`relation`) on connectors between object cards.
+  - **Crossing-Minimized Layered Layout Engine**: Upgraded `layeredLayout` and `layoutBoardElements` with Sugiyama-style 4-pass barycenter crossing minimization, connected-component separation, variable node dimensions, and smart boundary anchor calculation (`computeConnectorEndpoints`).
+  - **Mermaid Subgraphs & Bidirectional Conversion**: `parseMermaidFlowchart` now parses `subgraph ... end` blocks into Whiteboard Scenes/frames and preserves dashed (`-.->`) and bidirectional (`<-->`) edge styles. Added **"Turn into whiteboard"** on Mermaid code blocks in notes, direct clipboard paste (`⌘V`) for Mermaid flowcharts and JSON Canvas files on the whiteboard, and `boardToMermaid` export.
+  - **Board Layout & Export Menu**: Added a **Board** menu in the whiteboard header to add Mermaid flowcharts, auto-layout existing boards (Top → Down, Left → Right, or Grid), export as standalone vector **SVG (`.svg`)**, high-DPI **PNG (`.png`)**, **JSON Canvas (`.canvas`)**, or **Mermaid**, and import `.canvas` files.
+- **Two-way whiteboard relations.** Connectors snapped between Vasta objects support bidirectional relations with a 3-way direction toggle (`A ──▶ B`, `2-Way ⇄`, `A ◀── B`). Fully integrates with Vasta's native relation architecture using single-source relation properties with "Name on the other side" (`reverseName`) powered by backlinks, displaying reverse relations directly on target cards without duplicating state. Relation direction is strictly logical and independent of visual connector line terminations (arrowheads, plain lines, dots).
 - **OpenID Connect (OIDC / SSO) authentication.** Log in with an external identity provider like
   PocketID, Authentik, or Keycloak. Includes Settings › Single Sign-On to view provider status,
   callback URLs, and manage account linking.
@@ -18,9 +24,19 @@ GitHub release page.
 
 ### Changed
 
+- **Triangle and center shape snapping points.** Triangle shapes now snap to the exact midpoints of their slanted left and right edges, the bottom edge, and the top apex, rather than the rectangular bounding box. All shapes, cards, and sticky notes also feature a center snap port (`center`).
+- **Connectors default to underneath everything else.** Connectors and arrows now default to the lowest z-index layer on the whiteboard, cleanly passing underneath cards, sticky notes, and 2D shapes rather than overlapping them.
+- **Card dimension estimation and diagram spacing in auto-layout.** `layeredLayout` and `graphToElements` now account for the actual rendered height of Vasta object cards (`CARD_SIZE`: `260×160` default, `220×90` compact, `300×220` embed) with increased cross-axis margins (`GAP.y`: 84px), eliminating card overlaps in diagram subgraphs.
+- **Undistorted vertical and short connector routing.** Vertically and horizontally aligned orthogonal connectors now route directly in a single straight segment without unneeded zigzag detours, and arrowheads scale on tight spans to prevent overlap distortion.
 - **Angled connector control points.** Multi-turn angled connectors (U-shaped and S-shaped routes) show a midpoint handle when selected so their corner offsets can be repositioned interactively; single-turn elbows remain clean with only endpoint handles.
 - **Intelligent same-side angled connector routing.** Angled connectors attached to the same side of objects (top-top, bottom-bottom, left-left, right-right) automatically route into U-shaped lines outside the connected objects with clearance, and maintain user-adjusted distance when connected objects move.
-- **Connector midpoint handle alignment.** Middle control handle dots are mathematically aligned with the rendered SVG path shaft for both curved and angled connectors.
+- **Whiteboard connector snap contact.** Snapped connectors terminate right on the crisp outer boundary of cards and shapes without cutting inside the object outline or leaving an awkward gap.
+- **Dynamic object card boundary tracking.** Object cards on whiteboards dynamically monitor their rendered dimensions via ResizeObserver so connector anchors attach to the actual visual edges and centers regardless of content height or property list changes.
+- **Streamlined connector relation menu.** Cleaned up the connection popover with a compact direction bar, concise one-line relation items, support for separate names on each side for two-way relations, and immediate active relation toggling.
+
+### Fixed
+
+- **Whiteboard thumbnail and embed object card positioning.** Object cards in whiteboard thumbnails (gallery cards and page embeds) now render with native SVG card rectangles and properly bounded content containers, resolving a WebKit/Safari bug where `position: absolute` inside SVG `<foreignObject>` caused Vasta object cards to detach and jump to the top-left of the preview. Also synchronized actual rendered card heights to whiteboard card elements.
 
 ## 0.6.1 (2026-11-06)
 

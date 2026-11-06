@@ -282,8 +282,8 @@ export function mcpServer(tools: AgentTools, version: string): McpServer {
     {
       title: 'Get whiteboard',
       description:
-        'A whiteboard\'s elements (cards of objects, text, sticky notes, shapes, frames, pen strokes without their ink) with their boxes in board coordinates (x right, y down), and its arrows. format "canvas" gives the board as a JSON Canvas (jsoncanvas.org, Obsidian\'s format) instead.',
-      inputSchema: { id: z.string(), format: z.enum(['elements', 'canvas']).optional() },
+        'A whiteboard\'s elements (cards of objects, text, sticky notes, shapes, frames, pen strokes without their ink) with their boxes in board coordinates (x right, y down), and its arrows. format "canvas" gives the board as a JSON Canvas (jsoncanvas.org, Obsidian\'s format), "mermaid" as a Mermaid flowchart, and "svg" as a standalone vector SVG diagram.',
+      inputSchema: { id: z.string(), format: z.enum(['elements', 'canvas', 'mermaid', 'svg']).optional() },
       annotations: READ,
     },
     ({ id, format }) => run(() => tools.getBoard(id, format))
@@ -294,7 +294,7 @@ export function mcpServer(tools: AgentTools, version: string): McpServer {
     {
       title: 'Edit whiteboard',
       description:
-        'Change a whiteboard in one step (make one with create_object, type "Whiteboard"). "add": elements; a card shows an object ("object": its id or exact title), text, sticky and shape hold "text", a frame has a "title"; give x and y to place one, else new elements are laid out in a grid to the right of the board; "ref" names a new element so "arrows" can use it. "arrows": from and to are refs or ids from get_board. "update": move, resize, recolor, retext, retitle, reshape elements or relabel arrows. "remove": ids (an element\'s arrows and the strokes drawn on it go too). "mermaid": a Mermaid flowchart ("graph LR; A[Idea] --> B{Choose}"), laid out as shapes and arrows, nodes named like an object of the space becoming its card. "canvas": a JSON Canvas to add. Returns the board as get_board does, with the ids given to refs.',
+        'Change a whiteboard in one step (make one with create_object, type "Whiteboard"). "add": elements; a card shows an object ("object": its id or exact title), text, sticky and shape hold "text", a frame has a "title"; give x and y to place one, else new elements are laid out automatically (hierarchical layered layout when connected by arrows, or a grid to the right of the board); "ref" names a new element so "arrows" can use it. "arrows": from and to are refs or ids from get_board; "relation" binds an arrow between two cards to a Vasta relation property on their object types. "update": move, resize, recolor, retext, retitle, reshape elements or relabel/rebind arrows. "remove": ids (an element\'s arrows and the strokes drawn on it go too). "mermaid": a Mermaid flowchart ("graph LR; A[Idea] --> B{Choose}", including subgraphs), laid out as shapes, frames and arrows, nodes named like an object of the space becoming its card. "canvas": a JSON Canvas to add. "layout": auto-layout the board ("down", "right", "up", "left", or "grid"). Returns the board as get_board does, with the ids given to refs.',
       inputSchema: {
         id: z.string(),
         add: z
@@ -303,6 +303,7 @@ export function mcpServer(tools: AgentTools, version: string): McpServer {
               ref: z.string().optional(),
               kind: z.enum(['card', 'text', 'sticky', 'shape', 'frame']),
               object: z.string().optional(),
+              view: z.enum(['card', 'compact', 'embed']).optional().describe('For a card: "card", "compact", or "embed"'),
               text: z.string().optional(),
               shape: z.enum(['rectangle', 'ellipse', 'diamond', 'triangle', 'parallelogram', 'star', 'heart']).optional(),
               title: z.string().optional(),
@@ -314,7 +315,18 @@ export function mcpServer(tools: AgentTools, version: string): McpServer {
             })
           )
           .optional(),
-        arrows: z.array(z.object({ from: z.string(), to: z.string(), label: z.string().optional(), color: boardColor, ...arrowLook })).optional(),
+        arrows: z
+          .array(
+            z.object({
+              from: z.string(),
+              to: z.string(),
+              label: z.string().optional(),
+              relation: z.string().optional().describe('Between two cards: name or id of a relation property to link on their Vasta objects'),
+              color: boardColor,
+              ...arrowLook,
+            })
+          )
+          .optional(),
         update: z
           .array(
             z.object({
@@ -327,6 +339,7 @@ export function mcpServer(tools: AgentTools, version: string): McpServer {
               title: z.string().optional(),
               shape: z.enum(['rectangle', 'ellipse', 'diamond', 'triangle', 'parallelogram', 'star', 'heart']).optional(),
               label: z.string().optional(),
+              relation: z.string().nullable().optional().describe('Between two cards: relation property name/id to link, or null to unlink'),
               color: z.enum(COLOR_NAMES).nullable().optional(),
               ...arrowLook,
               view: z.enum(['card', 'compact', 'embed']).optional().describe("A card's look: its card, one line, or its contents (a query's live results, the text)"),
@@ -336,6 +349,7 @@ export function mcpServer(tools: AgentTools, version: string): McpServer {
         remove: z.array(z.string()).optional(),
         mermaid: z.string().optional(),
         canvas: z.union([z.string(), z.record(z.string(), z.unknown())]).optional().describe('A JSON Canvas, as an object or its text'),
+        layout: z.enum(['down', 'right', 'up', 'left', 'grid']).optional().describe('Auto-layout the board in the given flow direction or as a grid'),
       },
       annotations: WRITE,
     },

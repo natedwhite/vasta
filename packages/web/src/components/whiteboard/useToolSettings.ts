@@ -47,6 +47,7 @@ export type PopoverName =
   | 'selection-text'
   | 'selection-zorder'
   | 'selection-card-fields'
+  | 'selection-relation'
   | null
 
 const isDarkTheme = () =>
