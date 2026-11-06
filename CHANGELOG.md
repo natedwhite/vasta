@@ -16,6 +16,10 @@ GitHub release page.
   object or query. Define named **Scenes** to frame specific regions of a board and embed either the
   full board or a specific scene inside any document with `/Whiteboard` or `![[Board]]`.
 
+### Changed
+
+- **Angled connector control points.** Multi-turn angled connectors (U-shaped and S-shaped routes) show a midpoint handle when selected so their corner offsets can be repositioned interactively; single-turn elbows remain clean with only endpoint handles.
+
 ## 0.6.1 (2026-11-06)
 
 ### Added

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { getConnectorGeometry } from './shapes.ts'
+import { getConnectorGeometry, getOrthogonalMidPoint } from './shapes.ts'
 import type { ShapeElement } from './types.ts'
 
 describe('Whiteboard Connector Geometry', () => {
@@ -91,5 +91,64 @@ describe('Whiteboard Connector Geometry', () => {
 
     expect(width).toBe(80)
     expect(height).toBe(60)
+  })
+
+  it('returns null for single-turn elbow connectors (no middle handle dot)', () => {
+    const elbow: ShapeElement = {
+      id: 'conn-elbow',
+      type: 'arrow',
+      curvature: 'orthogonal',
+      x: 100,
+      y: 100,
+      width: 150,
+      height: 100,
+      startOrientation: 'horizontal',
+      endOrientation: 'vertical',
+      startAnchor: { targetId: 'c1', side: 'right' },
+      endAnchor: { targetId: 'c2', side: 'top' },
+    }
+    expect(getOrthogonalMidPoint(elbow)).toBeNull()
+  })
+
+  it('returns middle segment point for 2-turn S/Z orthogonal connectors', () => {
+    const sShape: ShapeElement = {
+      id: 'conn-s',
+      type: 'arrow',
+      curvature: 'orthogonal',
+      x: 100,
+      y: 100,
+      width: 200,
+      height: 100,
+      startOrientation: 'horizontal',
+      endOrientation: 'horizontal',
+      startAnchor: { targetId: 'c1', side: 'right' },
+      endAnchor: { targetId: 'c2', side: 'left' },
+      midOffset: 80,
+    }
+    const mid = getOrthogonalMidPoint(sShape)
+    expect(mid).not.toBeNull()
+    expect(mid!.x).toBe(180) // 100 + midOffset (80)
+    expect(mid!.y).toBe(150) // (100 + 200) / 2
+  })
+
+  it('returns middle segment point for 2-turn U-shaped orthogonal connectors', () => {
+    const uShape: ShapeElement = {
+      id: 'conn-u',
+      type: 'arrow',
+      curvature: 'orthogonal',
+      x: 100,
+      y: 100,
+      width: 200,
+      height: 0,
+      startOrientation: 'vertical',
+      endOrientation: 'vertical',
+      startAnchor: { targetId: 'c1', side: 'bottom' },
+      endAnchor: { targetId: 'c2', side: 'bottom' },
+      midOffset: 60,
+    }
+    const mid = getOrthogonalMidPoint(uShape)
+    expect(mid).not.toBeNull()
+    expect(mid!.x).toBe(200) // 100 + 200/2
+    expect(mid!.y).toBe(160) // 100 + midOffset (60)
   })
 })

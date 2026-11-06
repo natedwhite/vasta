@@ -7,6 +7,7 @@ import {
   anchorTargetId,
   distToPolyline,
   getAnchorPoint,
+  getOrthogonalMidPoint,
   isLine,
   orientationForSide,
   rotatePoint,
@@ -448,6 +449,11 @@ export function useWhiteboardSelection(opts: UseWhiteboardSelectionOptions) {
             y: 0.25 * pStart.y + 0.5 * ctrl.y + 0.25 * pEnd.y,
           }
           handles.push({ id: 'mid', x: midOnCurve.x, y: midOnCurve.y })
+        } else if (s.curvature === 'orthogonal') {
+          const mid = getOrthogonalMidPoint(s)
+          if (mid) {
+            handles.push({ id: 'mid', x: mid.x, y: mid.y })
+          }
         }
 
         return {

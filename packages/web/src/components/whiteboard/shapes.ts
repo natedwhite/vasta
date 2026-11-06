@@ -616,6 +616,64 @@ export function getConnectorGeometry(s: ShapeElement): ConnectorGeometry {
   }
 }
 
+/**
+ * For 3-segment orthogonal connectors (U-shape or S-shape with 2 turns),
+ * returns the midpoint of the adjustable middle segment.
+ * Returns null for simple elbows (1 turn), which have no adjustable middle segment.
+ */
+export function getOrthogonalMidPoint(s: ShapeElement): Point | null {
+  const x1 = s.x
+  const y1 = s.y
+  const x2 = s.x + s.width
+  const y2 = s.y + s.height
+  const dx = x2 - x1
+  const dy = y2 - y1
+
+  const lockedStartOri = orientationForSide(s.startAnchor?.side)
+  const lockedEndOri = orientationForSide(s.endAnchor?.side)
+  const defStartOri = s.orientation ?? (Math.abs(dx) >= Math.abs(dy) ? 'horizontal' : 'vertical')
+  const startOri = lockedStartOri ?? s.startOrientation ?? defStartOri
+  const endOri =
+    lockedEndOri ??
+    s.endOrientation ??
+    (s.startOrientation || lockedStartOri ? (startOri === 'horizontal' ? 'horizontal' : 'vertical') : defStartOri)
+
+  // Single turn elbow: no adjustable middle segment
+  if (startOri !== endOri) {
+    return null
+  }
+
+  const baseUx = dx >= 0 ? 1 : -1
+  const baseUy = dy >= 0 ? 1 : -1
+  const startSign =
+    s.startAnchor?.side === 'right'
+      ? 1
+      : s.startAnchor?.side === 'left'
+        ? -1
+        : s.startAnchor?.side === 'bottom'
+          ? 1
+          : s.startAnchor?.side === 'top'
+            ? -1
+            : startOri === 'horizontal'
+              ? baseUx
+              : baseUy
+
+  const stub = 24
+  if (startOri === 'vertical') {
+    let midY = s.midOffset !== undefined ? y1 + s.midOffset : y1 + dy / 2
+    if (s.startAnchor?.side && s.midOffset === undefined && startSign * dy < stub) {
+      midY = y1 + startSign * Math.max(stub, Math.abs(dy) + stub)
+    }
+    return { x: x1 + dx / 2, y: midY }
+  } else {
+    let midX = s.midOffset !== undefined ? x1 + s.midOffset : x1 + dx / 2
+    if (s.startAnchor?.side && s.midOffset === undefined && startSign * dx < stub) {
+      midX = x1 + startSign * Math.max(stub, Math.abs(dx) + stub)
+    }
+    return { x: midX, y: y1 + dy / 2 }
+  }
+}
+
 export function distToSegment(p: Point, a: Point, b: Point): number {
   const dx = b.x - a.x
   const dy = b.y - a.y
