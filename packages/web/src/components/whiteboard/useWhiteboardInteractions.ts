@@ -405,13 +405,12 @@ export function useWhiteboardInteractions(opts: {
         }
       } else if (resizeHandle === 'mid') {
         if (s.curvature === 'curved') {
-          const p0x = s.x
-          const p0y = s.y
-          const p2x = s.x + s.width
-          const p2y = s.y + s.height
+          const geo = getConnectorGeometry(s)
+          const p0 = geo.shaftStart
+          const p2 = geo.shaftEnd
           s.controlPoint = {
-            x: 2 * pt.x - 0.5 * p0x - 0.5 * p2x,
-            y: 2 * pt.y - 0.5 * p0y - 0.5 * p2y,
+            x: 2 * pt.x - 0.5 * p0.x - 0.5 * p2.x,
+            y: 2 * pt.y - 0.5 * p0.y - 0.5 * p2.y,
           }
         } else if (s.curvature === 'orthogonal') {
           const lockedStartOri = orientationForSide(s.startAnchor?.side)
@@ -422,10 +421,31 @@ export function useWhiteboardInteractions(opts: {
             lockedEndOri ??
             s.endOrientation ??
             (s.startOrientation || lockedStartOri ? (startOri === 'horizontal' ? 'horizontal' : 'vertical') : defStartOri)
+
           if (startOri === 'vertical' && endOri === 'vertical') {
-            s.midOffset = pt.y - s.y
+            const isTopTop = s.startAnchor?.side === 'top' && s.endAnchor?.side === 'top'
+            const isBottomBottom = s.startAnchor?.side === 'bottom' && s.endAnchor?.side === 'bottom'
+            let midY = pt.y
+            if (isTopTop) {
+              const minY = Math.min(s.y, s.y + s.height)
+              midY = Math.min(pt.y, minY - 16)
+            } else if (isBottomBottom) {
+              const maxY = Math.max(s.y, s.y + s.height)
+              midY = Math.max(pt.y, maxY + 16)
+            }
+            s.midOffset = midY - s.y
           } else if (startOri === 'horizontal' && endOri === 'horizontal') {
-            s.midOffset = pt.x - s.x
+            const isLeftLeft = s.startAnchor?.side === 'left' && s.endAnchor?.side === 'left'
+            const isRightRight = s.startAnchor?.side === 'right' && s.endAnchor?.side === 'right'
+            let midX = pt.x
+            if (isLeftLeft) {
+              const minX = Math.min(s.x, s.x + s.width)
+              midX = Math.min(pt.x, minX - 16)
+            } else if (isRightRight) {
+              const maxX = Math.max(s.x, s.x + s.width)
+              midX = Math.max(pt.x, maxX + 16)
+            }
+            s.midOffset = midX - s.x
           }
         }
       }

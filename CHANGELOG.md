@@ -19,6 +19,8 @@ GitHub release page.
 ### Changed
 
 - **Angled connector control points.** Multi-turn angled connectors (U-shaped and S-shaped routes) show a midpoint handle when selected so their corner offsets can be repositioned interactively; single-turn elbows remain clean with only endpoint handles.
+- **Intelligent same-side angled connector routing.** Angled connectors attached to the same side of objects (top-top, bottom-bottom, left-left, right-right) automatically route into U-shaped lines outside the connected objects with clearance, and maintain user-adjusted distance when connected objects move.
+- **Connector midpoint handle alignment.** Middle control handle dots are mathematically aligned with the rendered SVG path shaft for both curved and angled connectors.
 
 ## 0.6.1 (2026-11-06)
 

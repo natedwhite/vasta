@@ -7,7 +7,7 @@ import {
   anchorTargetId,
   distToPolyline,
   getAnchorPoint,
-  getOrthogonalMidPoint,
+  getConnectorGeometry,
   isLine,
   orientationForSide,
   rotatePoint,
@@ -246,23 +246,58 @@ export function useWhiteboardSelection(opts: UseWhiteboardSelectionOptions) {
         }
       }
 
-      // Scale orthogonal midOffset proportionally so the elbow never overshoots when cards move closer
-      if (s.curvature === 'orthogonal' && s.midOffset !== undefined) {
-        const startOri = s.startOrientation ?? (Math.abs(newDx) >= Math.abs(newDy) ? 'horizontal' : 'vertical')
-        const endOri = s.endOrientation ?? startOri
-        if (startOri === 'horizontal' && endOri === 'horizontal') {
-          if (Math.abs(oldDx) > 10 && Math.sign(newDx) === Math.sign(oldDx)) {
-            const ratio = Math.max(0.15, Math.min(0.85, s.midOffset / oldDx))
-            s.midOffset = newDx * ratio
-          } else {
-            s.midOffset = undefined
+      // Update orthogonal midOffset: for same-side U-shapes, maintain the user-set distance from the boxes.
+      // For general / S-shape connectors, scale proportionally with distance changes.
+      if (s.curvature === 'orthogonal') {
+        const isSameSide = s.startAnchor?.side && s.startAnchor.side === s.endAnchor?.side
+        if (isSameSide) {
+          const side = s.startAnchor!.side!
+          if (side === 'top') {
+            if (s.midOffset !== undefined) {
+              const oldMidY = oldStart.y + s.midOffset
+              const userDist = Math.max(16, Math.min(oldStart.y, oldEnd.y) - oldMidY)
+              const newMidY = Math.min(nextStart.y, nextEnd.y) - userDist
+              s.midOffset = newMidY - nextStart.y
+            }
+          } else if (side === 'bottom') {
+            if (s.midOffset !== undefined) {
+              const oldMidY = oldStart.y + s.midOffset
+              const userDist = Math.max(16, oldMidY - Math.max(oldStart.y, oldEnd.y))
+              const newMidY = Math.max(nextStart.y, nextEnd.y) + userDist
+              s.midOffset = newMidY - nextStart.y
+            }
+          } else if (side === 'left') {
+            if (s.midOffset !== undefined) {
+              const oldMidX = oldStart.x + s.midOffset
+              const userDist = Math.max(16, Math.min(oldStart.x, oldEnd.x) - oldMidX)
+              const newMidX = Math.min(nextStart.x, nextEnd.x) - userDist
+              s.midOffset = newMidX - nextStart.x
+            }
+          } else if (side === 'right') {
+            if (s.midOffset !== undefined) {
+              const oldMidX = oldStart.x + s.midOffset
+              const userDist = Math.max(16, oldMidX - Math.max(oldStart.x, oldEnd.x))
+              const newMidX = Math.max(nextStart.x, nextEnd.x) + userDist
+              s.midOffset = newMidX - nextStart.x
+            }
           }
-        } else if (startOri === 'vertical' && endOri === 'vertical') {
-          if (Math.abs(oldDy) > 10 && Math.sign(newDy) === Math.sign(oldDy)) {
-            const ratio = Math.max(0.15, Math.min(0.85, s.midOffset / oldDy))
-            s.midOffset = newDy * ratio
-          } else {
-            s.midOffset = undefined
+        } else if (s.midOffset !== undefined) {
+          const startOri = s.startOrientation ?? (Math.abs(newDx) >= Math.abs(newDy) ? 'horizontal' : 'vertical')
+          const endOri = s.endOrientation ?? startOri
+          if (startOri === 'horizontal' && endOri === 'horizontal') {
+            if (Math.abs(oldDx) > 10 && Math.sign(newDx) === Math.sign(oldDx)) {
+              const ratio = Math.max(0.15, Math.min(0.85, s.midOffset / oldDx))
+              s.midOffset = newDx * ratio
+            } else {
+              s.midOffset = undefined
+            }
+          } else if (startOri === 'vertical' && endOri === 'vertical') {
+            if (Math.abs(oldDy) > 10 && Math.sign(newDy) === Math.sign(oldDy)) {
+              const ratio = Math.max(0.15, Math.min(0.85, s.midOffset / oldDy))
+              s.midOffset = newDy * ratio
+            } else {
+              s.midOffset = undefined
+            }
           }
         }
       }
@@ -422,38 +457,14 @@ export function useWhiteboardSelection(opts: UseWhiteboardSelectionOptions) {
 
       if (found.kind === 'shape' && isLine(found.item as ShapeElement)) {
         const s = found.item as ShapeElement
+        const geo = getConnectorGeometry(s)
         const handles: Handle[] = [
           { id: 'start', x: s.x, y: s.y },
           { id: 'end', x: s.x + s.width, y: s.y + s.height },
         ]
 
-        if (s.curvature === 'curved') {
-          const pStart = { x: s.x, y: s.y }
-          const pEnd = { x: s.x + s.width, y: s.y + s.height }
-          const dx = s.width
-          const dy = s.height
-          const dist = Math.hypot(dx, dy) || 1
-          let ctrl: Point
-          if (s.controlPoint) {
-            ctrl = { ...s.controlPoint }
-          } else {
-            const uX = dx / dist
-            const uY = dy / dist
-            const nX = -uY
-            const nY = uX
-            const arcOffset = dist * 0.22
-            ctrl = { x: (pStart.x + pEnd.x) / 2 + nX * arcOffset, y: (pStart.y + pEnd.y) / 2 + nY * arcOffset }
-          }
-          const midOnCurve = {
-            x: 0.25 * pStart.x + 0.5 * ctrl.x + 0.25 * pEnd.x,
-            y: 0.25 * pStart.y + 0.5 * ctrl.y + 0.25 * pEnd.y,
-          }
-          handles.push({ id: 'mid', x: midOnCurve.x, y: midOnCurve.y })
-        } else if (s.curvature === 'orthogonal') {
-          const mid = getOrthogonalMidPoint(s)
-          if (mid) {
-            handles.push({ id: 'mid', x: mid.x, y: mid.y })
-          }
+        if (geo.midPoint) {
+          handles.push({ id: 'mid', x: geo.midPoint.x, y: geo.midPoint.y })
         }
 
         return {

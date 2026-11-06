@@ -97,6 +97,7 @@ describe('Whiteboard Connector Geometry', () => {
     const elbow: ShapeElement = {
       id: 'conn-elbow',
       type: 'arrow',
+      color: '#000000',
       curvature: 'orthogonal',
       x: 100,
       y: 100,
@@ -114,6 +115,7 @@ describe('Whiteboard Connector Geometry', () => {
     const sShape: ShapeElement = {
       id: 'conn-s',
       type: 'arrow',
+      color: '#000000',
       curvature: 'orthogonal',
       x: 100,
       y: 100,
@@ -135,6 +137,7 @@ describe('Whiteboard Connector Geometry', () => {
     const uShape: ShapeElement = {
       id: 'conn-u',
       type: 'arrow',
+      color: '#000000',
       curvature: 'orthogonal',
       x: 100,
       y: 100,
@@ -150,5 +153,104 @@ describe('Whiteboard Connector Geometry', () => {
     expect(mid).not.toBeNull()
     expect(mid!.x).toBe(200) // 100 + 200/2
     expect(mid!.y).toBe(160) // 100 + midOffset (60)
+  })
+
+  it('routes same-side top-top connectors above both boxes with default clearance', () => {
+    const topTop: ShapeElement = {
+      id: 'conn-top-top',
+      type: 'arrow',
+      color: '#000000',
+      curvature: 'orthogonal',
+      x: 100,
+      y: 150,
+      width: 200,
+      height: -50, // start at y=150, end at y=100 (c2 is higher)
+      startOrientation: 'vertical',
+      endOrientation: 'vertical',
+      startAnchor: { targetId: 'c1', side: 'top' },
+      endAnchor: { targetId: 'c2', side: 'top' },
+    }
+    const mid = getOrthogonalMidPoint(topTop)
+    expect(mid).not.toBeNull()
+    expect(mid!.x).toBe(200) // (100 + 300) / 2
+    // Higher box is at y=100. Default clearance is 36px above it: 100 - 36 = 64
+    expect(mid!.y).toBe(64)
+  })
+
+  it('routes same-side bottom-bottom connectors below both boxes with default clearance', () => {
+    const bottomBottom: ShapeElement = {
+      id: 'conn-bb',
+      type: 'arrow',
+      color: '#000000',
+      curvature: 'orthogonal',
+      x: 100,
+      y: 150,
+      width: 200,
+      height: 50, // start at y=150, end at y=200 (c2 is lower)
+      startOrientation: 'vertical',
+      endOrientation: 'vertical',
+      startAnchor: { targetId: 'c1', side: 'bottom' },
+      endAnchor: { targetId: 'c2', side: 'bottom' },
+    }
+    const mid = getOrthogonalMidPoint(bottomBottom)
+    expect(mid).not.toBeNull()
+    expect(mid!.x).toBe(200)
+    // Lower box is at y=200. Default clearance is 36px below it: 200 + 36 = 236
+    expect(mid!.y).toBe(236)
+  })
+
+  it('routes same-side right-right connectors to the right of both boxes with default clearance', () => {
+    const rightRight: ShapeElement = {
+      id: 'conn-rr',
+      type: 'arrow',
+      color: '#000000',
+      curvature: 'orthogonal',
+      x: 100,
+      y: 100,
+      width: 150, // start at x=100, end at x=250
+      height: 100,
+      startOrientation: 'horizontal',
+      endOrientation: 'horizontal',
+      startAnchor: { targetId: 'c1', side: 'right' },
+      endAnchor: { targetId: 'c2', side: 'right' },
+    }
+    const mid = getOrthogonalMidPoint(rightRight)
+    expect(mid).not.toBeNull()
+    // Rightmost box is at x=250. Default clearance is 36px to the right: 250 + 36 = 286
+    expect(mid!.x).toBe(286)
+    expect(mid!.y).toBe(150) // (100 + 200) / 2
+  })
+
+  it('calculates curved connector midpoint on the exact bezier curve', () => {
+    const curved: ShapeElement = {
+      id: 'conn-curved',
+      type: 'line',
+      color: '#000000',
+      curvature: 'curved',
+      arrowHead: 'none',
+      x: 100,
+      y: 100,
+      width: 200,
+      height: 0,
+      controlPoint: { x: 200, y: 50 },
+    }
+    const geo = getConnectorGeometry(curved)
+    expect(geo.midPoint).toBeDefined()
+    // At t=0.5: 0.25*start + 0.5*ctrl + 0.25*end
+    expect(geo.midPoint!.x).toBeCloseTo(200, 1)
+    expect(geo.midPoint!.y).toBeCloseTo(75, 1) // 0.25*100 + 0.5*50 + 0.25*100 = 75
+
+    // Also verify when arrow is present, midpoint is exactly halfway along the drawn shaft
+    const curvedArrow: ShapeElement = {
+      ...curved,
+      id: 'conn-curved-arrow',
+      type: 'arrow',
+      arrowHead: 'single',
+    }
+    const arrowGeo = getConnectorGeometry(curvedArrow)
+    const expectedX = 0.25 * arrowGeo.shaftStart.x + 0.5 * curved.controlPoint!.x + 0.25 * arrowGeo.shaftEnd.x
+    const expectedY = 0.25 * arrowGeo.shaftStart.y + 0.5 * curved.controlPoint!.y + 0.25 * arrowGeo.shaftEnd.y
+    expect(arrowGeo.midPoint!.x).toBeCloseTo(expectedX, 3)
+    expect(arrowGeo.midPoint!.y).toBeCloseTo(expectedY, 3)
   })
 })

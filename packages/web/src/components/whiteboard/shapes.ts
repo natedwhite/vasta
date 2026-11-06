@@ -268,9 +268,12 @@ export function shapePath(s: ShapeElement): string {
 
 export interface ConnectorGeometry {
   shaftPath: string
+  shaftStart: Point
+  shaftEnd: Point
   startHead?: string // SVG path for polygon/circle
   endHead?: string // SVG path for polygon/circle
   hitPoints: Point[]
+  midPoint?: Point
 }
 
 /**
@@ -333,6 +336,8 @@ export function getConnectorGeometry(s: ShapeElement): ConnectorGeometry {
   if (dist < 4) {
     return {
       shaftPath: `M ${x1} ${y1} L ${x2} ${y2}`,
+      shaftStart: { x: x1, y: y1 },
+      shaftEnd: { x: x2, y: y2 },
       hitPoints: [{ x: x1, y: y1 }, { x: x2, y: y2 }],
     }
   }
@@ -444,6 +449,8 @@ export function getConnectorGeometry(s: ShapeElement): ConnectorGeometry {
           : `M ${shaftStart.x} ${shaftStart.y} L ${cornerX} ${cornerY} L ${shaftEnd.x} ${shaftEnd.y}`
       return {
         shaftPath,
+        shaftStart,
+        shaftEnd,
         startHead,
         endHead,
         hitPoints: [{ x: x1, y: y1 }, { x: cornerX, y: cornerY }, { x: x2, y: y2 }],
@@ -460,16 +467,32 @@ export function getConnectorGeometry(s: ShapeElement): ConnectorGeometry {
           : `M ${shaftStart.x} ${shaftStart.y} L ${cornerX} ${cornerY} L ${shaftEnd.x} ${shaftEnd.y}`
       return {
         shaftPath,
+        shaftStart,
+        shaftEnd,
         startHead,
         endHead,
         hitPoints: [{ x: x1, y: y1 }, { x: cornerX, y: cornerY }, { x: x2, y: y2 }],
       }
     } else if (startOri === 'vertical' && endOri === 'vertical') {
-      const stub = 24
-      let midY = s.midOffset !== undefined ? y1 + s.midOffset : y1 + dy / 2
-      if (s.startAnchor?.side && s.midOffset === undefined && startSign * dy < stub) {
-        midY = y1 + startSign * Math.max(stub, Math.abs(dy) + stub)
+      const isTopTop = s.startAnchor?.side === 'top' && s.endAnchor?.side === 'top'
+      const isBottomBottom = s.startAnchor?.side === 'bottom' && s.endAnchor?.side === 'bottom'
+      const DEFAULT_CLEARANCE = 36
+      let midY: number
+      if (s.midOffset !== undefined) {
+        midY = s.y + s.midOffset
+      } else if (isTopTop) {
+        midY = Math.min(s.y, s.y + s.height) - DEFAULT_CLEARANCE
+      } else if (isBottomBottom) {
+        midY = Math.max(s.y, s.y + s.height) + DEFAULT_CLEARANCE
+      } else {
+        const stub = 24
+        midY = s.y + dy / 2
+        if (s.startAnchor?.side && startSign * dy < stub) {
+          midY = s.y + startSign * Math.max(stub, Math.abs(dy) + stub)
+        }
       }
+
+      const r = Math.min(12, Math.abs(dx) / 2, Math.abs(midY - shaftStart.y) / 2, Math.abs(shaftEnd.y - midY) / 2)
       const dir1 = midY >= shaftStart.y ? 1 : -1
       const dir2 = shaftEnd.y >= midY ? 1 : -1
       const p1 = `M ${shaftStart.x} ${shaftStart.y} L ${x1} ${midY - dir1 * r}`
@@ -483,17 +506,34 @@ export function getConnectorGeometry(s: ShapeElement): ConnectorGeometry {
           : `M ${shaftStart.x} ${shaftStart.y} L ${x1} ${midY} L ${x2} ${midY} L ${shaftEnd.x} ${shaftEnd.y}`
       return {
         shaftPath,
+        shaftStart,
+        shaftEnd,
         startHead,
         endHead,
         hitPoints: [{ x: x1, y: y1 }, { x: x1, y: midY }, { x: x2, y: midY }, { x: x2, y: y2 }],
+        midPoint: { x: (x1 + x2) / 2, y: midY },
       }
     } else {
       // Horizontal -> Horizontal (standard 3 segment)
-      const stub = 24
-      let midX = s.midOffset !== undefined ? x1 + s.midOffset : x1 + dx / 2
-      if (s.startAnchor?.side && s.midOffset === undefined && startSign * dx < stub) {
-        midX = x1 + startSign * Math.max(stub, Math.abs(dx) + stub)
+      const isLeftLeft = s.startAnchor?.side === 'left' && s.endAnchor?.side === 'left'
+      const isRightRight = s.startAnchor?.side === 'right' && s.endAnchor?.side === 'right'
+      const DEFAULT_CLEARANCE = 36
+      let midX: number
+      if (s.midOffset !== undefined) {
+        midX = s.x + s.midOffset
+      } else if (isLeftLeft) {
+        midX = Math.min(s.x, s.x + s.width) - DEFAULT_CLEARANCE
+      } else if (isRightRight) {
+        midX = Math.max(s.x, s.x + s.width) + DEFAULT_CLEARANCE
+      } else {
+        const stub = 24
+        midX = s.x + dx / 2
+        if (s.startAnchor?.side && startSign * dx < stub) {
+          midX = s.x + startSign * Math.max(stub, Math.abs(dx) + stub)
+        }
       }
+
+      const r = Math.min(12, Math.abs(dy) / 2, Math.abs(midX - shaftStart.x) / 2, Math.abs(shaftEnd.x - midX) / 2)
       const dir1 = midX >= shaftStart.x ? 1 : -1
       const dir2 = shaftEnd.x >= midX ? 1 : -1
       const p1 = `M ${shaftStart.x} ${shaftStart.y} L ${midX - dir1 * r} ${y1}`
@@ -507,9 +547,12 @@ export function getConnectorGeometry(s: ShapeElement): ConnectorGeometry {
           : `M ${shaftStart.x} ${shaftStart.y} L ${midX} ${y1} L ${midX} ${y2} L ${shaftEnd.x} ${shaftEnd.y}`
       return {
         shaftPath,
+        shaftStart,
+        shaftEnd,
         startHead,
         endHead,
         hitPoints: [{ x: x1, y: y1 }, { x: midX, y: y1 }, { x: midX, y: y2 }, { x: x2, y: y2 }],
+        midPoint: { x: midX, y: (y1 + y2) / 2 },
       }
     }
   }
@@ -569,11 +612,19 @@ export function getConnectorGeometry(s: ShapeElement): ConnectorGeometry {
       }
     }
 
+    const midPoint: Point = {
+      x: 0.25 * shaftStart.x + 0.5 * ctrl.x + 0.25 * shaftEnd.x,
+      y: 0.25 * shaftStart.y + 0.5 * ctrl.y + 0.25 * shaftEnd.y,
+    }
+
     return {
       shaftPath: `M ${shaftStart.x} ${shaftStart.y} Q ${ctrl.x} ${ctrl.y} ${shaftEnd.x} ${shaftEnd.y}`,
+      shaftStart,
+      shaftEnd,
       startHead,
       endHead,
       hitPoints: [{ x: x1, y: y1 }, ctrl, { x: x2, y: y2 }],
+      midPoint,
     }
   }
 
@@ -610,6 +661,8 @@ export function getConnectorGeometry(s: ShapeElement): ConnectorGeometry {
 
   return {
     shaftPath: `M ${shaftStart.x} ${shaftStart.y} L ${shaftEnd.x} ${shaftEnd.y}`,
+    shaftStart,
+    shaftEnd,
     startHead,
     endHead,
     hitPoints: [{ x: x1, y: y1 }, { x: x2, y: y2 }],
@@ -622,56 +675,8 @@ export function getConnectorGeometry(s: ShapeElement): ConnectorGeometry {
  * Returns null for simple elbows (1 turn), which have no adjustable middle segment.
  */
 export function getOrthogonalMidPoint(s: ShapeElement): Point | null {
-  const x1 = s.x
-  const y1 = s.y
-  const x2 = s.x + s.width
-  const y2 = s.y + s.height
-  const dx = x2 - x1
-  const dy = y2 - y1
-
-  const lockedStartOri = orientationForSide(s.startAnchor?.side)
-  const lockedEndOri = orientationForSide(s.endAnchor?.side)
-  const defStartOri = s.orientation ?? (Math.abs(dx) >= Math.abs(dy) ? 'horizontal' : 'vertical')
-  const startOri = lockedStartOri ?? s.startOrientation ?? defStartOri
-  const endOri =
-    lockedEndOri ??
-    s.endOrientation ??
-    (s.startOrientation || lockedStartOri ? (startOri === 'horizontal' ? 'horizontal' : 'vertical') : defStartOri)
-
-  // Single turn elbow: no adjustable middle segment
-  if (startOri !== endOri) {
-    return null
-  }
-
-  const baseUx = dx >= 0 ? 1 : -1
-  const baseUy = dy >= 0 ? 1 : -1
-  const startSign =
-    s.startAnchor?.side === 'right'
-      ? 1
-      : s.startAnchor?.side === 'left'
-        ? -1
-        : s.startAnchor?.side === 'bottom'
-          ? 1
-          : s.startAnchor?.side === 'top'
-            ? -1
-            : startOri === 'horizontal'
-              ? baseUx
-              : baseUy
-
-  const stub = 24
-  if (startOri === 'vertical') {
-    let midY = s.midOffset !== undefined ? y1 + s.midOffset : y1 + dy / 2
-    if (s.startAnchor?.side && s.midOffset === undefined && startSign * dy < stub) {
-      midY = y1 + startSign * Math.max(stub, Math.abs(dy) + stub)
-    }
-    return { x: x1 + dx / 2, y: midY }
-  } else {
-    let midX = s.midOffset !== undefined ? x1 + s.midOffset : x1 + dx / 2
-    if (s.startAnchor?.side && s.midOffset === undefined && startSign * dx < stub) {
-      midX = x1 + startSign * Math.max(stub, Math.abs(dx) + stub)
-    }
-    return { x: midX, y: y1 + dy / 2 }
-  }
+  if (s.curvature !== 'orthogonal') return null
+  return getConnectorGeometry(s).midPoint ?? null
 }
 
 export function distToSegment(p: Point, a: Point, b: Point): number {
