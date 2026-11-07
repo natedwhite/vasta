@@ -235,28 +235,19 @@ function open() {
             fill="none"
           />
           <path
-            v-if="connector.startHead"
+            v-if="connector.startHead && connector.startHeadType !== 'dot'"
             :d="connector.startHead"
             :fill="s.color"
             :stroke="s.color"
             stroke-width="1"
           />
           <path
-            v-if="connector.endHead"
+            v-if="connector.endHead && connector.endHeadType !== 'dot'"
             :d="connector.endHead"
             :fill="s.color"
             :stroke="s.color"
             stroke-width="1"
           />
-          <text
-            v-if="s.text?.trim()"
-            :x="connector.labelPoint.x"
-            :y="connector.labelPoint.y - 6"
-            text-anchor="middle"
-            font-size="11"
-            font-weight="600"
-            fill="currentColor"
-          >{{ s.text }}</text>
         </template>
         <template v-else>
           <path
@@ -323,6 +314,25 @@ function open() {
           </div>
         </foreignObject>
       </g>
+      <!-- Dot Terminations (on top of cards, stickies, and 2D shapes) -->
+      <g v-for="{ shape: s, line, connector } in renderedShapes" :key="`dot-${s.id}`">
+        <template v-if="line && connector">
+          <path v-if="connector.startDot" :d="connector.startDot" :fill="s.color" stroke="none" />
+          <path v-if="connector.endDot" :d="connector.endDot" :fill="s.color" stroke="none" />
+        </template>
+      </g>
+      <!-- Connector Text Labels (on top of cards and shapes) -->
+      <template v-for="{ shape: s, line, connector } in renderedShapes" :key="`lbl-${s.id}`">
+        <text
+          v-if="line && connector && s.text?.trim()"
+          :x="connector.labelPoint.x"
+          :y="connector.labelPoint.y - 6"
+          text-anchor="middle"
+          font-size="11"
+          font-weight="600"
+          fill="currentColor"
+        >{{ s.text }}</text>
+      </template>
     </svg>
     <span v-if="box.empty" class="absolute inset-0 grid place-items-center text-sm text-ink-faint">Empty whiteboard</span>
     <span class="absolute left-2 top-2 flex items-center gap-1 rounded-md bg-surface/90 px-1.5 py-0.5 text-[11px] font-medium text-ink-soft ring-1 ring-line pointer-events-none">

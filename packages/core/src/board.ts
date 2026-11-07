@@ -1023,6 +1023,8 @@ export function elementsToWhiteboardData(
     shapes.push(connector)
   }
 
+  z = Math.max(100, z)
+
   for (const el of elements) {
     if (el.kind === 'frame') {
       const prev = existingScenes.get(el.id)

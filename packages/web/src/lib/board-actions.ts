@@ -432,6 +432,7 @@ export function exportWhiteboardToSvg(data: WhiteboardData, padding = 48): strin
 
   // 2. Connectors (1D lines & arrows - rendered underneath shapes, stickies, and cards)
   const labelOverlayParts: string[] = []
+  const dotOverlayParts: string[] = []
   for (const s of data.shapes) {
     if (s.type !== 'line' && s.type !== 'arrow') continue
     const geom = getConnectorGeometry(s)
@@ -443,13 +444,20 @@ export function exportWhiteboardToSvg(data: WhiteboardData, padding = 48): strin
     parts.push(
       `    <path d="${geom.shaftPath}" fill="none" stroke="${stroke}" stroke-width="${sw}" stroke-linecap="round" stroke-linejoin="round"${dash} />`
     )
-    if (geom.startHead) {
+    if (geom.startHead && geom.startHeadType !== 'dot') {
       parts.push(`    <path d="${geom.startHead}" fill="${stroke}" />`)
     }
-    if (geom.endHead) {
+    if (geom.endHead && geom.endHeadType !== 'dot') {
       parts.push(`    <path d="${geom.endHead}" fill="${stroke}" />`)
     }
     parts.push(`  </g>`)
+
+    if (geom.startDot) {
+      dotOverlayParts.push(`  <path d="${geom.startDot}" fill="${stroke}" />`)
+    }
+    if (geom.endDot) {
+      dotOverlayParts.push(`  <path d="${geom.endDot}" fill="${stroke}" />`)
+    }
 
     const labelText = s.text?.trim() || resolveRelationLabel(s, data.cards)
     if (labelText) {
@@ -540,6 +548,7 @@ export function exportWhiteboardToSvg(data: WhiteboardData, padding = 48): strin
     )
   }
 
+  parts.push(...dotOverlayParts)
   parts.push(...labelOverlayParts)
 
   // 6. Freehand Ink Strokes

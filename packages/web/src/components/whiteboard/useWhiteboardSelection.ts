@@ -460,27 +460,34 @@ export function useWhiteboardSelection(opts: UseWhiteboardSelectionOptions) {
     let z = 1
     const raw = getAllRawItems()
     for (const entry of raw) {
-      if (entry.item.zIndex === undefined && entry.kind === 'shape' && isLine(entry.item as ShapeElement)) {
-        entry.item.zIndex = z++
+      if (entry.kind === 'shape' && isLine(entry.item as ShapeElement)) {
+        if (entry.item.zIndex === undefined) entry.item.zIndex = z++
       }
     }
+    z = 100
     for (const entry of raw) {
-      if (entry.item.zIndex === undefined) entry.item.zIndex = z++
+      if (entry.kind !== 'shape' || !isLine(entry.item as ShapeElement)) {
+        if (entry.item.zIndex === undefined) entry.item.zIndex = z++
+      }
     }
   }
   ensureZIndices()
 
   function renormalizeZIndices() {
     const raw = getAllRawItems()
-    raw.sort((a, b) => (a.item.zIndex ?? 0) - (b.item.zIndex ?? 0))
-    raw.forEach((entry, idx) => {
+    const lines = raw.filter((e) => e.kind === 'shape' && isLine(e.item as ShapeElement)).sort((a, b) => (a.item.zIndex ?? 0) - (b.item.zIndex ?? 0))
+    const nonLines = raw.filter((e) => e.kind !== 'shape' || !isLine(e.item as ShapeElement)).sort((a, b) => (a.item.zIndex ?? 0) - (b.item.zIndex ?? 0))
+    lines.forEach((entry, idx) => {
       entry.item.zIndex = idx + 1
+    })
+    nonLines.forEach((entry, idx) => {
+      entry.item.zIndex = 100 + idx
     })
   }
   renormalizeZIndices()
 
   function getMaxZIndex(): number {
-    let max = 0
+    let max = 100
     const raw = getAllRawItems()
     for (const entry of raw) {
       if ((entry.item.zIndex ?? 0) > max) max = entry.item.zIndex!
@@ -496,7 +503,7 @@ export function useWhiteboardSelection(opts: UseWhiteboardSelectionOptions) {
         return {
           key: entry.key,
           kind: 'stroke',
-          zIndex: s.zIndex ?? 10,
+          zIndex: Math.max(s.zIndex ?? 100, 100),
           item: s,
           pathD: s.points.map((p, i) => `${i ? 'L' : 'M'} ${p.x} ${p.y}`).join(' '),
           center: s.rotation ? getStrokeCenter(s) : undefined,
@@ -508,7 +515,7 @@ export function useWhiteboardSelection(opts: UseWhiteboardSelectionOptions) {
         return {
           key: entry.key,
           kind: 'shape',
-          zIndex: s.zIndex ?? (line ? 0 : 10),
+          zIndex: line ? Math.min(s.zIndex ?? 1, 99) : Math.max(s.zIndex ?? 100, 100),
           item: s,
           isLine: line,
           connectorGeo: line ? getConnectorGeometry(s) : undefined,
@@ -520,7 +527,7 @@ export function useWhiteboardSelection(opts: UseWhiteboardSelectionOptions) {
         return {
           key: entry.key,
           kind: 'sticky',
-          zIndex: st.zIndex ?? 10,
+          zIndex: Math.max(st.zIndex ?? 100, 100),
           item: st,
           palette: stickyStyle(st.color),
         }
@@ -529,7 +536,7 @@ export function useWhiteboardSelection(opts: UseWhiteboardSelectionOptions) {
       return {
         key: entry.key,
         kind: 'card',
-        zIndex: c.zIndex ?? 10,
+        zIndex: Math.max(c.zIndex ?? 100, 100),
         item: c,
       }
     })

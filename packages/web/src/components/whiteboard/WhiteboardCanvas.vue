@@ -593,13 +593,13 @@ const activeDraftConnectorGeo = computed(() =>
                   fill="none"
                 />
                 <path
-                  v-if="entry.connectorGeo.startHead"
+                  v-if="entry.connectorGeo.startHead && entry.connectorGeo.startHeadType !== 'dot'"
                   :d="entry.connectorGeo.startHead"
                   :fill="entry.item.color"
                   stroke="none"
                 />
                 <path
-                  v-if="entry.connectorGeo.endHead"
+                  v-if="entry.connectorGeo.endHead && entry.connectorGeo.endHeadType !== 'dot'"
                   :d="entry.connectorGeo.endHead"
                   :fill="entry.item.color"
                   stroke="none"
@@ -748,6 +748,28 @@ const activeDraftConnectorGeo = computed(() =>
         </div>
       </template>
 
+      <!-- Dot terminations overlay (always on top of cards, stickies, and 2D shapes) -->
+      <template v-for="entry in allCanvasItems" :key="`dot-${entry.key}`">
+        <svg
+          v-if="entry.kind === 'shape' && entry.isLine && entry.connectorGeo && (entry.connectorGeo.startDot || entry.connectorGeo.endDot)"
+          class="pointer-events-none absolute left-0 top-0 h-px w-px overflow-visible"
+          :style="{ zIndex: 20000 + entry.zIndex }"
+        >
+          <path
+            v-if="entry.connectorGeo.startDot"
+            :d="entry.connectorGeo.startDot"
+            :fill="entry.item.color"
+            stroke="none"
+          />
+          <path
+            v-if="entry.connectorGeo.endDot"
+            :d="entry.connectorGeo.endDot"
+            :fill="entry.item.color"
+            stroke="none"
+          />
+        </svg>
+      </template>
+
       <!-- Active Drawing / Shape Overlay (Live in progress) -->
       <svg v-if="currentStroke || currentShape" class="pointer-events-none absolute left-0 top-0 h-px w-px overflow-visible" :style="{ zIndex: 999999 }">
         <path
@@ -773,14 +795,26 @@ const activeDraftConnectorGeo = computed(() =>
               fill="none"
             />
             <path
-              v-if="activeDraftConnectorGeo.startHead"
+              v-if="activeDraftConnectorGeo.startHead && activeDraftConnectorGeo.startHeadType !== 'dot'"
               :d="activeDraftConnectorGeo.startHead"
               :fill="currentShape.color"
               stroke="none"
             />
             <path
-              v-if="activeDraftConnectorGeo.endHead"
+              v-if="activeDraftConnectorGeo.endHead && activeDraftConnectorGeo.endHeadType !== 'dot'"
               :d="activeDraftConnectorGeo.endHead"
+              :fill="currentShape.color"
+              stroke="none"
+            />
+            <path
+              v-if="activeDraftConnectorGeo.startDot"
+              :d="activeDraftConnectorGeo.startDot"
+              :fill="currentShape.color"
+              stroke="none"
+            />
+            <path
+              v-if="activeDraftConnectorGeo.endDot"
+              :d="activeDraftConnectorGeo.endDot"
               :fill="currentShape.color"
               stroke="none"
             />

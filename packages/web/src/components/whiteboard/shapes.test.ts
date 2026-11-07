@@ -45,6 +45,10 @@ describe('Whiteboard Connector Geometry', () => {
     // Start dot centered at x=100, end dot centered at x=300
     expect(geo.startHead).toContain('M 94.5 100') // 100 - dotRadius (5.5)
     expect(geo.endHead).toContain('M 294.5 100') // 300 - dotRadius (5.5)
+    expect(geo.startDot).toBeDefined()
+    expect(geo.endDot).toBeDefined()
+    expect(geo.startHeadType).toBe('dot')
+    expect(geo.endHeadType).toBe('dot')
   })
 
   it('does not offset free-floating connector ends (no anchors)', () => {
@@ -63,6 +67,9 @@ describe('Whiteboard Connector Geometry', () => {
 
     const geo = getConnectorGeometry(freeArrow)
     // Without snap anchors, tip remains exactly at the end coordinate (300)
+    expect(geo.endHeadType).toBe('arrow')
+    expect(geo.endDot).toBeUndefined()
+    expect(geo.endHead).toBeDefined()
     expect(geo.endHead).toContain('M 300 100')
   })
 

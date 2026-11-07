@@ -297,6 +297,10 @@ export interface ConnectorGeometry {
   shaftEnd: Point
   startHead?: string // SVG path for polygon/circle
   endHead?: string // SVG path for polygon/circle
+  startHeadType?: 'arrow' | 'dot'
+  endHeadType?: 'arrow' | 'dot'
+  startDot?: string
+  endDot?: string
   hitPoints: Point[]
   midPoint?: Point
   labelPoint: Point
@@ -361,14 +365,41 @@ export function getConnectorGeometry(s: ShapeElement): ConnectorGeometry {
   const arrowWidth = Math.min(Math.max(12, strokeW * 3.6), Math.max(6, dist * 0.4))
   const dotRadius = Math.min(Math.max(5.5, strokeW * 1.8), Math.max(3, dist * 0.35))
 
+  let startHead: string | undefined
+  let endHead: string | undefined
+  let startDot: string | undefined
+  let endDot: string | undefined
+
+  const buildResult = (
+    shaftPath: string,
+    sStart: Point,
+    sEnd: Point,
+    hitPoints: Point[],
+    labelPoint: Point,
+    midPoint?: Point
+  ): ConnectorGeometry => ({
+    shaftPath,
+    shaftStart: sStart,
+    shaftEnd: sEnd,
+    startHead: startHead ?? startDot,
+    endHead: endHead ?? endDot,
+    startHeadType: hasStartDot ? 'dot' : hasStartArrow ? 'arrow' : undefined,
+    endHeadType: hasEndDot ? 'dot' : hasEndArrow ? 'arrow' : undefined,
+    startDot,
+    endDot,
+    hitPoints,
+    labelPoint,
+    ...(midPoint ? { midPoint } : {}),
+  })
+
   if (dist < 4) {
-    return {
-      shaftPath: `M ${x1} ${y1} L ${x2} ${y2}`,
-      shaftStart: { x: x1, y: y1 },
-      shaftEnd: { x: x2, y: y2 },
-      hitPoints: [{ x: x1, y: y1 }, { x: x2, y: y2 }],
-      labelPoint: { x: (x1 + x2) / 2, y: (y1 + y2) / 2 },
-    }
+    return buildResult(
+      `M ${x1} ${y1} L ${x2} ${y2}`,
+      { x: x1, y: y1 },
+      { x: x2, y: y2 },
+      [{ x: x1, y: y1 }, { x: x2, y: y2 }],
+      { x: (x1 + x2) / 2, y: (y1 + y2) / 2 }
+    )
   }
 
   if (curvature === 'orthogonal') {
@@ -384,8 +415,6 @@ export function getConnectorGeometry(s: ShapeElement): ConnectorGeometry {
 
     let shaftStart = { x: x1, y: y1 }
     let shaftEnd = { x: x2, y: y2 }
-    let startHead: string | undefined
-    let endHead: string | undefined
 
     const baseUx = dx >= 0 ? 1 : -1
     const baseUy = dy >= 0 ? 1 : -1
@@ -426,8 +455,8 @@ export function getConnectorGeometry(s: ShapeElement): ConnectorGeometry {
         const sw2 = { x: x1 - arrowWidth / 2, y: shaftStart.y }
         startHead = `M ${x1} ${y1} L ${sw1.x} ${sw1.y} L ${sw2.x} ${sw2.y} Z`
       } else if (hasStartDot) {
-        shaftStart = { x: x1, y: y1 + startSign * dotRadius }
-        startHead = `M ${x1 - dotRadius} ${y1} a ${dotRadius} ${dotRadius} 0 1 0 ${dotRadius * 2} 0 a ${dotRadius} ${dotRadius} 0 1 0 ${-dotRadius * 2} 0 Z`
+        shaftStart = { x: x1, y: y1 }
+        startDot = `M ${x1 - dotRadius} ${y1} a ${dotRadius} ${dotRadius} 0 1 0 ${dotRadius * 2} 0 a ${dotRadius} ${dotRadius} 0 1 0 ${-dotRadius * 2} 0 Z`
       }
     } else {
       if (hasStartArrow) {
@@ -436,8 +465,8 @@ export function getConnectorGeometry(s: ShapeElement): ConnectorGeometry {
         const sw2 = { x: shaftStart.x, y: y1 - arrowWidth / 2 }
         startHead = `M ${x1} ${y1} L ${sw1.x} ${sw1.y} L ${sw2.x} ${sw2.y} Z`
       } else if (hasStartDot) {
-        shaftStart = { x: x1 + startSign * dotRadius, y: y1 }
-        startHead = `M ${x1 - dotRadius} ${y1} a ${dotRadius} ${dotRadius} 0 1 0 ${dotRadius * 2} 0 a ${dotRadius} ${dotRadius} 0 1 0 ${-dotRadius * 2} 0 Z`
+        shaftStart = { x: x1, y: y1 }
+        startDot = `M ${x1 - dotRadius} ${y1} a ${dotRadius} ${dotRadius} 0 1 0 ${dotRadius * 2} 0 a ${dotRadius} ${dotRadius} 0 1 0 ${-dotRadius * 2} 0 Z`
       }
     }
 
@@ -449,8 +478,8 @@ export function getConnectorGeometry(s: ShapeElement): ConnectorGeometry {
         const w2 = { x: x2 - arrowWidth / 2, y: shaftEnd.y }
         endHead = `M ${x2} ${y2} L ${w1.x} ${w1.y} L ${w2.x} ${w2.y} Z`
       } else if (hasEndDot) {
-        shaftEnd = { x: x2, y: y2 - endSign * dotRadius }
-        endHead = `M ${x2 - dotRadius} ${y2} a ${dotRadius} ${dotRadius} 0 1 0 ${dotRadius * 2} 0 a ${dotRadius} ${dotRadius} 0 1 0 ${-dotRadius * 2} 0 Z`
+        shaftEnd = { x: x2, y: y2 }
+        endDot = `M ${x2 - dotRadius} ${y2} a ${dotRadius} ${dotRadius} 0 1 0 ${dotRadius * 2} 0 a ${dotRadius} ${dotRadius} 0 1 0 ${-dotRadius * 2} 0 Z`
       }
     } else {
       if (hasEndArrow) {
@@ -459,8 +488,8 @@ export function getConnectorGeometry(s: ShapeElement): ConnectorGeometry {
         const w2 = { x: shaftEnd.x, y: y2 - arrowWidth / 2 }
         endHead = `M ${x2} ${y2} L ${w1.x} ${w1.y} L ${w2.x} ${w2.y} Z`
       } else if (hasEndDot) {
-        shaftEnd = { x: x2 - endSign * dotRadius, y: y2 }
-        endHead = `M ${x2 - dotRadius} ${y2} a ${dotRadius} ${dotRadius} 0 1 0 ${dotRadius * 2} 0 a ${dotRadius} ${dotRadius} 0 1 0 ${-dotRadius * 2} 0 Z`
+        shaftEnd = { x: x2, y: y2 }
+        endDot = `M ${x2 - dotRadius} ${y2} a ${dotRadius} ${dotRadius} 0 1 0 ${dotRadius * 2} 0 a ${dotRadius} ${dotRadius} 0 1 0 ${-dotRadius * 2} 0 Z`
       }
     }
 
@@ -480,15 +509,7 @@ export function getConnectorGeometry(s: ShapeElement): ConnectorGeometry {
         Math.abs(cornerX - x1) >= Math.abs(y2 - cornerY)
           ? { x: (x1 + cornerX) / 2, y: cornerY }
           : { x: cornerX, y: (cornerY + y2) / 2 }
-      return {
-        shaftPath,
-        shaftStart,
-        shaftEnd,
-        startHead,
-        endHead,
-        hitPoints: [{ x: x1, y: y1 }, { x: cornerX, y: cornerY }, { x: x2, y: y2 }],
-        labelPoint,
-      }
+      return buildResult(shaftPath, shaftStart, shaftEnd, [{ x: x1, y: y1 }, { x: cornerX, y: cornerY }, { x: x2, y: y2 }], labelPoint)
     } else if (startOri === 'vertical' && endOri === 'horizontal') {
       const cornerX = x1
       const cornerY = y2
@@ -503,31 +524,14 @@ export function getConnectorGeometry(s: ShapeElement): ConnectorGeometry {
         Math.abs(cornerY - y1) >= Math.abs(x2 - cornerX)
           ? { x: cornerX, y: (y1 + cornerY) / 2 }
           : { x: (cornerX + x2) / 2, y: cornerY }
-      return {
-        shaftPath,
-        shaftStart,
-        shaftEnd,
-        startHead,
-        endHead,
-        hitPoints: [{ x: x1, y: y1 }, { x: cornerX, y: cornerY }, { x: x2, y: y2 }],
-        labelPoint,
-      }
+      return buildResult(shaftPath, shaftStart, shaftEnd, [{ x: x1, y: y1 }, { x: cornerX, y: cornerY }, { x: x2, y: y2 }], labelPoint)
     } else if (startOri === 'vertical' && endOri === 'vertical') {
       const isTopTop = s.startAnchor?.side === 'top' && s.endAnchor?.side === 'top'
       const isBottomBottom = s.startAnchor?.side === 'bottom' && s.endAnchor?.side === 'bottom'
       if (Math.abs(dx) < 6 && s.midOffset === undefined && !isTopTop && !isBottomBottom && startSign === baseUy) {
         const shaftPath = `M ${shaftStart.x} ${shaftStart.y} L ${shaftEnd.x} ${shaftEnd.y}`
         const midPt = { x: (x1 + x2) / 2, y: (y1 + y2) / 2 }
-        return {
-          shaftPath,
-          shaftStart,
-          shaftEnd,
-          startHead,
-          endHead,
-          hitPoints: [{ x: x1, y: y1 }, { x: x2, y: y2 }],
-          midPoint: midPt,
-          labelPoint: midPt,
-        }
+        return buildResult(shaftPath, shaftStart, shaftEnd, [{ x: x1, y: y1 }, { x: x2, y: y2 }], midPt, midPt)
       }
       const DEFAULT_CLEARANCE = 36
       let midY: number
@@ -558,16 +562,7 @@ export function getConnectorGeometry(s: ShapeElement): ConnectorGeometry {
           ? `${p1} ${c1} ${p2} ${c2} ${p3}`
           : `M ${shaftStart.x} ${shaftStart.y} L ${x1} ${midY} L ${x2} ${midY} L ${shaftEnd.x} ${shaftEnd.y}`
       const midPt = { x: (x1 + x2) / 2, y: midY }
-      return {
-        shaftPath,
-        shaftStart,
-        shaftEnd,
-        startHead,
-        endHead,
-        hitPoints: [{ x: x1, y: y1 }, { x: x1, y: midY }, { x: x2, y: midY }, { x: x2, y: y2 }],
-        midPoint: midPt,
-        labelPoint: midPt,
-      }
+      return buildResult(shaftPath, shaftStart, shaftEnd, [{ x: x1, y: y1 }, { x: x1, y: midY }, { x: x2, y: midY }, { x: x2, y: y2 }], midPt, midPt)
     } else {
       // Horizontal -> Horizontal (standard 3 segment)
       const isLeftLeft = s.startAnchor?.side === 'left' && s.endAnchor?.side === 'left'
@@ -575,16 +570,7 @@ export function getConnectorGeometry(s: ShapeElement): ConnectorGeometry {
       if (Math.abs(dy) < 6 && s.midOffset === undefined && !isLeftLeft && !isRightRight && startSign === baseUx) {
         const shaftPath = `M ${shaftStart.x} ${shaftStart.y} L ${shaftEnd.x} ${shaftEnd.y}`
         const midPt = { x: (x1 + x2) / 2, y: (y1 + y2) / 2 }
-        return {
-          shaftPath,
-          shaftStart,
-          shaftEnd,
-          startHead,
-          endHead,
-          hitPoints: [{ x: x1, y: y1 }, { x: x2, y: y2 }],
-          midPoint: midPt,
-          labelPoint: midPt,
-        }
+        return buildResult(shaftPath, shaftStart, shaftEnd, [{ x: x1, y: y1 }, { x: x2, y: y2 }], midPt, midPt)
       }
       const DEFAULT_CLEARANCE = 36
       let midX: number
@@ -615,16 +601,7 @@ export function getConnectorGeometry(s: ShapeElement): ConnectorGeometry {
           ? `${p1} ${c1} ${p2} ${c2} ${p3}`
           : `M ${shaftStart.x} ${shaftStart.y} L ${midX} ${y1} L ${midX} ${y2} L ${shaftEnd.x} ${shaftEnd.y}`
       const midPt = { x: midX, y: (y1 + y2) / 2 }
-      return {
-        shaftPath,
-        shaftStart,
-        shaftEnd,
-        startHead,
-        endHead,
-        hitPoints: [{ x: x1, y: y1 }, { x: midX, y: y1 }, { x: midX, y: y2 }, { x: x2, y: y2 }],
-        midPoint: midPt,
-        labelPoint: midPt,
-      }
+      return buildResult(shaftPath, shaftStart, shaftEnd, [{ x: x1, y: y1 }, { x: midX, y: y1 }, { x: midX, y: y2 }, { x: x2, y: y2 }], midPt, midPt)
     }
   }
 
@@ -650,7 +627,6 @@ export function getConnectorGeometry(s: ShapeElement): ConnectorGeometry {
     const tnY = tuX
 
     let shaftEnd = { x: x2, y: y2 }
-    let endHead: string | undefined
 
     if (hasEndArrow) {
       shaftEnd = { x: x2 - tuX * arrowLen, y: y2 - tuY * arrowLen }
@@ -658,13 +634,12 @@ export function getConnectorGeometry(s: ShapeElement): ConnectorGeometry {
       const w2 = { x: shaftEnd.x - tnX * (arrowWidth / 2), y: shaftEnd.y - tnY * (arrowWidth / 2) }
       endHead = `M ${x2} ${y2} L ${w1.x} ${w1.y} L ${w2.x} ${w2.y} Z`
     } else if (hasEndDot) {
-      shaftEnd = { x: x2 - tuX * dotRadius, y: y2 - tuY * dotRadius }
-      endHead = `M ${x2 - dotRadius} ${y2} a ${dotRadius} ${dotRadius} 0 1 0 ${dotRadius * 2} 0 a ${dotRadius} ${dotRadius} 0 1 0 ${-dotRadius * 2} 0 Z`
+      shaftEnd = { x: x2, y: y2 }
+      endDot = `M ${x2 - dotRadius} ${y2} a ${dotRadius} ${dotRadius} 0 1 0 ${dotRadius * 2} 0 a ${dotRadius} ${dotRadius} 0 1 0 ${-dotRadius * 2} 0 Z`
     }
 
     let shaftStart = { x: x1, y: y1 }
-    let startHead: string | undefined
-    if (hasStartArrow || hasStartDot) {
+    if (hasStartArrow) {
       const tStartDx = ctrl.x - x1
       const tStartDy = ctrl.y - y1
       const tStartLen = Math.hypot(tStartDx, tStartDy) || 1
@@ -672,15 +647,13 @@ export function getConnectorGeometry(s: ShapeElement): ConnectorGeometry {
       const suY = tStartDy / tStartLen
       const snX = -suY
       const snY = suX
-      if (hasStartArrow) {
-        shaftStart = { x: x1 + suX * arrowLen, y: y1 + suY * arrowLen }
-        const sw1 = { x: shaftStart.x + snX * (arrowWidth / 2), y: shaftStart.y + snY * (arrowWidth / 2) }
-        const sw2 = { x: shaftStart.x - snX * (arrowWidth / 2), y: shaftStart.y - snY * (arrowWidth / 2) }
-        startHead = `M ${x1} ${y1} L ${sw1.x} ${sw1.y} L ${sw2.x} ${sw2.y} Z`
-      } else {
-        shaftStart = { x: x1 + suX * dotRadius, y: y1 + suY * dotRadius }
-        startHead = `M ${x1 - dotRadius} ${y1} a ${dotRadius} ${dotRadius} 0 1 0 ${dotRadius * 2} 0 a ${dotRadius} ${dotRadius} 0 1 0 ${-dotRadius * 2} 0 Z`
-      }
+      shaftStart = { x: x1 + suX * arrowLen, y: y1 + suY * arrowLen }
+      const sw1 = { x: shaftStart.x + snX * (arrowWidth / 2), y: shaftStart.y + snY * (arrowWidth / 2) }
+      const sw2 = { x: shaftStart.x - snX * (arrowWidth / 2), y: shaftStart.y - snY * (arrowWidth / 2) }
+      startHead = `M ${x1} ${y1} L ${sw1.x} ${sw1.y} L ${sw2.x} ${sw2.y} Z`
+    } else if (hasStartDot) {
+      shaftStart = { x: x1, y: y1 }
+      startDot = `M ${x1 - dotRadius} ${y1} a ${dotRadius} ${dotRadius} 0 1 0 ${dotRadius * 2} 0 a ${dotRadius} ${dotRadius} 0 1 0 ${-dotRadius * 2} 0 Z`
     }
 
     const midPoint: Point = {
@@ -688,16 +661,14 @@ export function getConnectorGeometry(s: ShapeElement): ConnectorGeometry {
       y: 0.25 * shaftStart.y + 0.5 * ctrl.y + 0.25 * shaftEnd.y,
     }
 
-    return {
-      shaftPath: `M ${shaftStart.x} ${shaftStart.y} Q ${ctrl.x} ${ctrl.y} ${shaftEnd.x} ${shaftEnd.y}`,
+    return buildResult(
+      `M ${shaftStart.x} ${shaftStart.y} Q ${ctrl.x} ${ctrl.y} ${shaftEnd.x} ${shaftEnd.y}`,
       shaftStart,
       shaftEnd,
-      startHead,
-      endHead,
-      hitPoints: [{ x: x1, y: y1 }, ctrl, { x: x2, y: y2 }],
+      [{ x: x1, y: y1 }, ctrl, { x: x2, y: y2 }],
       midPoint,
-      labelPoint: midPoint,
-    }
+      midPoint
+    )
   }
 
   // Straight line
@@ -708,8 +679,6 @@ export function getConnectorGeometry(s: ShapeElement): ConnectorGeometry {
 
   let shaftStart = { x: x1, y: y1 }
   let shaftEnd = { x: x2, y: y2 }
-  let startHead: string | undefined
-  let endHead: string | undefined
 
   if (hasEndArrow) {
     shaftEnd = { x: x2 - uX * arrowLen, y: y2 - uY * arrowLen }
@@ -717,8 +686,8 @@ export function getConnectorGeometry(s: ShapeElement): ConnectorGeometry {
     const w2 = { x: shaftEnd.x - nX * (arrowWidth / 2), y: shaftEnd.y - nY * (arrowWidth / 2) }
     endHead = `M ${x2} ${y2} L ${w1.x} ${w1.y} L ${w2.x} ${w2.y} Z`
   } else if (hasEndDot) {
-    shaftEnd = { x: x2 - uX * dotRadius, y: y2 - uY * dotRadius }
-    endHead = `M ${x2 - dotRadius} ${y2} a ${dotRadius} ${dotRadius} 0 1 0 ${dotRadius * 2} 0 a ${dotRadius} ${dotRadius} 0 1 0 ${-dotRadius * 2} 0 Z`
+    shaftEnd = { x: x2, y: y2 }
+    endDot = `M ${x2 - dotRadius} ${y2} a ${dotRadius} ${dotRadius} 0 1 0 ${dotRadius * 2} 0 a ${dotRadius} ${dotRadius} 0 1 0 ${-dotRadius * 2} 0 Z`
   }
 
   if (hasStartArrow) {
@@ -727,19 +696,17 @@ export function getConnectorGeometry(s: ShapeElement): ConnectorGeometry {
     const sw2 = { x: shaftStart.x - nX * (arrowWidth / 2), y: shaftStart.y - nY * (arrowWidth / 2) }
     startHead = `M ${x1} ${y1} L ${sw1.x} ${sw1.y} L ${sw2.x} ${sw2.y} Z`
   } else if (hasStartDot) {
-    shaftStart = { x: x1 + uX * dotRadius, y: y1 + uY * dotRadius }
-    startHead = `M ${x1 - dotRadius} ${y1} a ${dotRadius} ${dotRadius} 0 1 0 ${dotRadius * 2} 0 a ${dotRadius} ${dotRadius} 0 1 0 ${-dotRadius * 2} 0 Z`
+    shaftStart = { x: x1, y: y1 }
+    startDot = `M ${x1 - dotRadius} ${y1} a ${dotRadius} ${dotRadius} 0 1 0 ${dotRadius * 2} 0 a ${dotRadius} ${dotRadius} 0 1 0 ${-dotRadius * 2} 0 Z`
   }
 
-  return {
-    shaftPath: `M ${shaftStart.x} ${shaftStart.y} L ${shaftEnd.x} ${shaftEnd.y}`,
+  return buildResult(
+    `M ${shaftStart.x} ${shaftStart.y} L ${shaftEnd.x} ${shaftEnd.y}`,
     shaftStart,
     shaftEnd,
-    startHead,
-    endHead,
-    hitPoints: [{ x: x1, y: y1 }, { x: x2, y: y2 }],
-    labelPoint: { x: (shaftStart.x + shaftEnd.x) / 2, y: (shaftStart.y + shaftEnd.y) / 2 },
-  }
+    [{ x: x1, y: y1 }, { x: x2, y: y2 }],
+    { x: (shaftStart.x + shaftEnd.x) / 2, y: (shaftStart.y + shaftEnd.y) / 2 }
+  )
 }
 
 /**
