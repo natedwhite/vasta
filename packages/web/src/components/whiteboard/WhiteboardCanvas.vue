@@ -611,16 +611,25 @@ const activeDraftConnectorGeo = computed(() =>
                 />
               </template>
 
-              <path
-                v-else
-                :d="shapePath(entry.item)"
-                :stroke="entry.item.color"
-                :stroke-width="entry.item.strokeWidth || 3"
-                :stroke-dasharray="getStrokeDash(entry.item.strokeStyle)"
-                :fill="getShapeFill(entry.item)"
-                stroke-linecap="round"
-                stroke-linejoin="round"
-              />
+              <template v-else>
+                <!-- Frosted surface wash for tinted shapes so elements underneath are dimmed and recede into background -->
+                <path
+                  v-if="entry.item.fill === 'tint'"
+                  :d="shapePath(entry.item)"
+                  fill="var(--color-surface, #ffffff)"
+                  fill-opacity="0.65"
+                  stroke="none"
+                />
+                <path
+                  :d="shapePath(entry.item)"
+                  :stroke="entry.item.color"
+                  :stroke-width="entry.item.strokeWidth || 3"
+                  :stroke-dasharray="getStrokeDash(entry.item.strokeStyle)"
+                  :fill="getShapeFill(entry.item)"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                />
+              </template>
             </g>
           </svg>
 
@@ -838,16 +847,24 @@ const activeDraftConnectorGeo = computed(() =>
               stroke="none"
             />
           </template>
-          <path
-            v-else
-            :d="shapePath(currentShape)"
-            :stroke="currentShape.color"
-            :stroke-width="currentShape.strokeWidth || 3"
-            :fill="getShapeFill(currentShape)"
-            stroke-linecap="round"
-            stroke-linejoin="round"
-            stroke-dasharray="6 5"
-          />
+          <template v-else>
+            <path
+              v-if="currentShape.fill === 'tint'"
+              :d="shapePath(currentShape)"
+              fill="var(--color-surface, #ffffff)"
+              fill-opacity="0.65"
+              stroke="none"
+            />
+            <path
+              :d="shapePath(currentShape)"
+              :stroke="currentShape.color"
+              :stroke-width="currentShape.strokeWidth || 3"
+              :fill="getShapeFill(currentShape)"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              stroke-dasharray="6 5"
+            />
+          </template>
         </g>
       </svg>
 

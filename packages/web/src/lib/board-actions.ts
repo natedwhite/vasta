@@ -511,16 +511,21 @@ export function exportWhiteboardToSvg(data: WhiteboardData, padding = 48): strin
       const dash = s.strokeStyle === 'dashed' ? ' stroke-dasharray="8 6"' : s.strokeStyle === 'dotted' ? ' stroke-dasharray="3 5"' : ''
       const sw = s.strokeWidth ?? 2.5
 
+      let washGeom = s.fill === 'tint' ? `<rect x="${b.x}" y="${b.y}" width="${b.w}" height="${b.h}" rx="10" fill="#ffffff" fill-opacity="0.65" stroke="none" />` : ''
       let geom = `<rect x="${b.x}" y="${b.y}" width="${b.w}" height="${b.h}" rx="10" fill="${fill}" stroke="${stroke}" stroke-width="${sw}"${dash} />`
       if (s.type === 'ellipse') {
+        if (s.fill === 'tint') washGeom = `<ellipse cx="${cx}" cy="${cy}" rx="${b.w / 2}" ry="${b.h / 2}" fill="#ffffff" fill-opacity="0.65" stroke="none" />`
         geom = `<ellipse cx="${cx}" cy="${cy}" rx="${b.w / 2}" ry="${b.h / 2}" fill="${fill}" stroke="${stroke}" stroke-width="${sw}"${dash} />`
       } else if (s.type === 'diamond') {
+        if (s.fill === 'tint') washGeom = `<polygon points="${cx},${b.y} ${b.x + b.w},${cy} ${cx},${b.y + b.h} ${b.x},${cy}" fill="#ffffff" fill-opacity="0.65" stroke="none" />`
         geom = `<polygon points="${cx},${b.y} ${b.x + b.w},${cy} ${cx},${b.y + b.h} ${b.x},${cy}" fill="${fill}" stroke="${stroke}" stroke-width="${sw}" stroke-linejoin="round"${dash} />`
       } else if (s.type === 'triangle') {
+        if (s.fill === 'tint') washGeom = `<polygon points="${cx},${b.y} ${b.x + b.w},${b.y + b.h} ${b.x},${b.y + b.h}" fill="#ffffff" fill-opacity="0.65" stroke="none" />`
         geom = `<polygon points="${cx},${b.y} ${b.x + b.w},${b.y + b.h} ${b.x},${b.y + b.h}" fill="${fill}" stroke="${stroke}" stroke-width="${sw}" stroke-linejoin="round"${dash} />`
       }
 
       parts.push(`  <g>`)
+      if (washGeom) parts.push(`    ${washGeom}`)
       parts.push(`    ${geom}`)
       if (s.text?.trim()) {
         const textFill = s.fill === 'solid' && !s.fillColor ? '#ffffff' : '#0f172a'

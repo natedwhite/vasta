@@ -296,6 +296,14 @@ function open() {
             />
           </template>
           <template v-else>
+            <!-- Frosted surface wash for tinted shapes so elements underneath are dimmed -->
+            <path
+              v-if="entry.item.fill === 'tint'"
+              :d="shapePath(entry.item)"
+              fill="var(--color-surface, #ffffff)"
+              fill-opacity="0.65"
+              stroke="none"
+            />
             <path
               :d="shapePath(entry.item)"
               :stroke="entry.item.color"

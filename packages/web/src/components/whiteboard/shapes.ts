@@ -223,7 +223,7 @@ export function getShapeFill(s: ShapeElement): string {
   if (f === 'none') return 'transparent'
   if (f === 'white') return '#ffffff'
   const base = s.fillColor || s.color
-  if (f === 'tint') return `${base}26` // 15% opacity hex
+  if (f === 'tint') return `${base}33` // 20% opacity color wash (rendered over 65% frosted surface wash)
   if (f === 'solid') return base
   return f // custom hex
 }

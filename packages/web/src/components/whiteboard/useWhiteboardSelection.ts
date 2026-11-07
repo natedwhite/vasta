@@ -1408,7 +1408,7 @@ export function useWhiteboardSelection(opts: UseWhiteboardSelectionOptions) {
         if (s.fill === 'none') return 'transparent'
         if (s.fill === 'white') return '#ffffff'
         const base = s.fillColor || s.color
-        if (s.fill === 'tint') return `${base}40`
+        if (s.fill === 'tint') return `${base}33`
         return base
       }
     }
