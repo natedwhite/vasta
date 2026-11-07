@@ -8,6 +8,7 @@ GitHub release page.
 
 ### Added
 
+- **Whiteboard connector labels & custom relation labels.** Users can now choose or edit a text label for any connector on the whiteboard, including non-Vasta object connections (between 2D shapes, sticky notes, or free-floating lines). Connectors bound to Vasta relations can also have a custom label chosen by the user, which overrides the displayed badge and preview label while keeping the underlying logical relation linked in Vasta. Clicking on any connector label pill opens the label & relation popover, and double-clicking or double-tapping any connector line directly opens label editing.
 - **AI whiteboard tools, complex diagram auto-layout, and multi-format exports.**
   - **Bidirectional AI & Canvas Sync**: `get_board` and `edit_board` MCP tools (and `vasta board` CLI) now synchronize seamlessly with the interactive whiteboard canvas (`wb_elements`, `wb_meta`, and `whiteboardData`), including live Vasta relation bindings (`relation`) on connectors between object cards.
   - **Crossing-Minimized Layered Layout Engine**: Upgraded `layeredLayout` and `layoutBoardElements` with Sugiyama-style 4-pass barycenter crossing minimization, connected-component separation, variable node dimensions, and smart boundary anchor calculation (`computeConnectorEndpoints`).

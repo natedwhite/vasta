@@ -93,6 +93,7 @@ export function useWhiteboardInteractions(opts: {
     currentStickyFontSize,
     shape2DSettings,
     connectorSettings,
+    activePopover,
     closeAllPopovers,
     onSelectMainTool,
     eraserCursor,
@@ -531,11 +532,18 @@ export function useWhiteboardInteractions(opts: {
     lastTapTime = now
     if (isDouble && key) {
       const { kind, id } = parseKey(key)
-      const is2DShape = kind === 'shape' && !isLine(findItem(key)?.item as ShapeElement)
+      const found = findItem(key)
+      const is2DShape = kind === 'shape' && !isLine(found?.item as ShapeElement)
       if (kind === 'sticky' || is2DShape) {
         selected.value = [key]
         lastTapKey = undefined
         startEditing(id)
+        return true
+      }
+      if (kind === 'shape' && isLine(found?.item as ShapeElement)) {
+        selected.value = [key]
+        lastTapKey = undefined
+        activePopover.value = 'selection-relation'
         return true
       }
     }

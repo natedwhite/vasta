@@ -673,18 +673,29 @@ const activeDraftConnectorGeo = computed(() =>
                   ? 'translate(-50%, -145%)'
                   : 'translate(-50%, -50%)',
             }"
-            :title="`${entry.relationInfo.ownerTitle} · ${entry.relationInfo.propertyName} → ${entry.relationInfo.targetTitle}`"
+            :title="
+              entry.item.text?.trim()
+                ? `${entry.item.text.trim()} (Linked: ${entry.relationInfo.ownerTitle} · ${entry.relationInfo.propertyName} → ${entry.relationInfo.targetTitle})`
+                : `${entry.relationInfo.ownerTitle} · ${entry.relationInfo.propertyName} → ${entry.relationInfo.targetTitle}`
+            "
             @pointerdown.stop
             @click.stop="onConnectorRelationBadgeClick(entry.item.id)"
           >
             <AppIcon fallback="ph:link-simple" :size="11" class="text-primary shrink-0" />
-            <span class="max-w-36 truncate">{{ entry.relationInfo.displayLabel }}</span>
+            <span class="max-w-36 truncate">{{ entry.item.text?.trim() || entry.relationInfo.displayLabel }}</span>
           </button>
 
           <!-- Plain Text Label Pill for Non-Relation Connectors -->
-          <span
+          <button
             v-else-if="entry.isLine && entry.item.text?.trim() && entry.connectorGeo"
-            class="pointer-events-none absolute rounded-full border border-line bg-surface/95 px-2 py-0.5 text-[11px] font-semibold text-ink shadow-xs"
+            type="button"
+            data-wb-ui
+            class="pointer-events-auto absolute flex items-center rounded-full border bg-surface/95 px-2 py-0.5 text-[11px] font-semibold shadow-xs backdrop-blur-xs transition-transform hover:scale-105 hover:border-primary/60"
+            :class="
+              isSelected('shape', entry.item.id)
+                ? 'border-primary text-primary ring-2 ring-primary/25'
+                : 'border-line text-ink hover:border-primary/60'
+            "
             :style="{
               left: `${entry.connectorGeo.labelPoint.x}px`,
               top: `${entry.connectorGeo.labelPoint.y}px`,
@@ -694,9 +705,12 @@ const activeDraftConnectorGeo = computed(() =>
                   ? 'translate(-50%, -145%)'
                   : 'translate(-50%, -50%)',
             }"
+            :title="`Connector label: ${entry.item.text.trim()}`"
+            @pointerdown.stop
+            @click.stop="onConnectorRelationBadgeClick(entry.item.id)"
           >
-            {{ entry.item.text }}
-          </span>
+            <span class="max-w-36 truncate">{{ entry.item.text.trim() }}</span>
+          </button>
         </template>
 
         <!-- 3. Object Card -->

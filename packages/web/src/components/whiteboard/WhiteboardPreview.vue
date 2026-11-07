@@ -6,9 +6,9 @@ import { parseWhiteboardProp, type Id, type ObjectRecord, type ObjectSummary } f
 import AppIcon from '../AppIcon.vue'
 import { api } from '../../lib/api.ts'
 import { onChange } from '../../lib/events.ts'
-import { requestSummaries } from '../../lib/state.ts'
+import { requestSummaries, summaryOf, typesById } from '../../lib/state.ts'
 import { getConnectorGeometry, getShapeFill, getStrokeDash, isLine, shapePath, stickyStyle } from './shapes.ts'
-import type { WhiteboardData, WhiteboardScene } from './types.ts'
+import type { ShapeElement, WhiteboardData, WhiteboardScene } from './types.ts'
 import WhiteboardObjectCard from './WhiteboardObjectCard.vue'
 
 const props = withDefaults(
@@ -128,6 +128,18 @@ const renderedShapes = computed(() =>
     })
     .sort((a, b) => a.zIndex - b.zIndex),
 )
+
+function getConnectorLabel(s: ShapeElement): string | null {
+  if (s.text?.trim()) return s.text.trim()
+  if (!s.relation) return null
+  const ownerId = s.relation.ownerObjectId
+  const card = data.value?.cards?.find((c) => c.objectId === ownerId)
+  const summary = summaryOf(ownerId)
+  const typeId = card?.typeId || summary?.typeId
+  const ownerType = typeId ? typesById.value.get(typeId) : undefined
+  const prop = ownerType?.properties.find((p) => p.id === s.relation!.propertyId)
+  return prop?.name || null
+}
 
 const renderedStickies = computed(() =>
   (data.value?.stickies ?? []).map((s) => ({
@@ -324,14 +336,14 @@ function open() {
       <!-- Connector Text Labels (on top of cards and shapes) -->
       <template v-for="{ shape: s, line, connector } in renderedShapes" :key="`lbl-${s.id}`">
         <text
-          v-if="line && connector && s.text?.trim()"
+          v-if="line && connector && getConnectorLabel(s)"
           :x="connector.labelPoint.x"
           :y="connector.labelPoint.y - 6"
           text-anchor="middle"
           font-size="11"
           font-weight="600"
           fill="currentColor"
-        >{{ s.text }}</text>
+        >{{ getConnectorLabel(s) }}</text>
       </template>
     </svg>
     <span v-if="box.empty" class="absolute inset-0 grid place-items-center text-sm text-ink-faint">Empty whiteboard</span>

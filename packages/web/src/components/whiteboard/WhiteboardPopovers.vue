@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, inject, ref, watch } from 'vue'
+import { computed, inject, nextTick, ref, watch } from 'vue'
 import AppIcon from '../AppIcon.vue'
 import { chip } from '../../lib/colors.ts'
 import { kindIcon } from '../../lib/properties.ts'
@@ -85,6 +85,11 @@ const {
   toggleCardProperty,
   isOnlySelectedLine,
   selectedConnector,
+  selectedConnectorText,
+  commitSelectedConnectorText,
+  resetConnectorTextToRelation,
+  clearSelectedConnectorText,
+  formatAnchorTarget,
   connectorCardPair,
   connectorRelationOptions,
   selectedConnectorRelationInfo,
@@ -104,6 +109,29 @@ const newRelRestrictType = ref(true)
 const newRelMultiple = ref(true)
 const newRelReverseName = ref('')
 const creatingRelation = ref(false)
+
+const connectorLabelInputRef = ref<HTMLInputElement | null>(null)
+
+watch(
+  () => activePopover.value,
+  (pop) => {
+    if (pop === 'selection-relation') {
+      void nextTick(() => {
+        connectorLabelInputRef.value?.focus()
+        connectorLabelInputRef.value?.select()
+      })
+    }
+  },
+)
+
+function onConnectorLabelFocus() {
+  commitSelectedConnectorText()
+}
+
+function onConnectorLabelEnter(e: Event) {
+  commitSelectedConnectorText()
+  ;(e.target as HTMLInputElement)?.blur()
+}
 
 watch(
   () => [activePopover.value, connectorCardPair.value?.connector.id] as const,
@@ -360,34 +388,55 @@ function isCustomColorActive(current: string | undefined, palette: string[]): bo
       <AppIcon fallback="ph:line-segments" :size="15" />
     </button>
 
-    <!-- 1D CONNECTOR: Vasta Relation Trigger -->
+    <!-- 1D CONNECTOR: Label & Relation Trigger -->
     <button
       v-if="isOnlySelectedLine"
       class="relative flex h-7 items-center gap-1.5 px-2.5 rounded-lg font-medium active:scale-95 transition-all"
       :class="[
         activePopover === 'selection-relation'
           ? 'bg-primary text-white shadow-xs'
-          : selectedConnectorRelationInfo
+          : selectedConnectorRelationInfo || selectedConnector?.text?.trim()
             ? 'bg-primary/15 text-primary ring-1 ring-primary/35 hover:bg-primary/20'
             : connectorCardPair
               ? 'text-ink hover:bg-hover border border-line/80'
-              : 'text-ink-faint hover:bg-hover hover:text-ink-soft',
+              : 'text-ink-soft hover:bg-hover hover:text-ink',
       ]"
       :title="
         selectedConnectorRelationInfo
-          ? `Linked Relation: ${selectedConnectorRelationInfo.ownerTitle} · ${selectedConnectorRelationInfo.propertyName} → ${selectedConnectorRelationInfo.targetTitle}`
-          : connectorCardPair
-            ? 'Link this connector to a Vasta relation property'
-            : 'Snap both ends to Object Cards to link as a Vasta relation'
+          ? selectedConnector?.text?.trim()
+            ? `${selectedConnector.text.trim()} (Linked: ${selectedConnectorRelationInfo.ownerTitle} · ${selectedConnectorRelationInfo.propertyName} → ${selectedConnectorRelationInfo.targetTitle})`
+            : `Linked Relation: ${selectedConnectorRelationInfo.ownerTitle} · ${selectedConnectorRelationInfo.propertyName} → ${selectedConnectorRelationInfo.targetTitle}`
+          : selectedConnector?.text?.trim()
+            ? `Connector Label: ${selectedConnector.text.trim()}`
+            : connectorCardPair
+              ? 'Set connector label or link to a Vasta relation'
+              : 'Add connector label'
       "
       @click.stop="togglePopover('selection-relation')"
     >
-      <AppIcon :fallback="selectedConnectorRelationInfo || connectorCardPair ? 'ph:link-simple' : 'ph:link-simple-break'" :size="14" />
-      <span v-if="selectedConnectorRelationInfo" class="max-w-28 truncate text-[11px] font-semibold">
+      <AppIcon
+        :fallback="
+          selectedConnectorRelationInfo
+            ? 'ph:link-simple'
+            : selectedConnector?.text?.trim()
+              ? 'ph:tag'
+              : connectorCardPair
+                ? 'ph:link-simple'
+                : 'ph:tag'
+        "
+        :size="14"
+      />
+      <span v-if="selectedConnector?.text?.trim()" class="max-w-28 truncate text-[11px] font-semibold">
+        {{ selectedConnector.text.trim() }}
+      </span>
+      <span v-else-if="selectedConnectorRelationInfo" class="max-w-28 truncate text-[11px] font-semibold">
         {{ selectedConnectorRelationInfo.displayLabel }}
       </span>
       <span v-else-if="connectorCardPair" class="text-[11px]">
-        Link Relation
+        Label & Relation
+      </span>
+      <span v-else class="text-[11px]">
+        Label
       </span>
       <span
         v-if="!selectedConnectorRelationInfo && hasUnboundExistingRelation"
@@ -996,23 +1045,75 @@ function isCustomColorActive(current: string | undefined, palette: string[]): bo
       </template>
     </template>
 
-    <!-- 8. Selection Connector-as-Relation Popover -->
+    <!-- 8. Selection Connector Label & Vasta Relation Popover -->
     <template v-else-if="activePopover === 'selection-relation' && isOnlySelectedLine">
+      <!-- Connector Label Section (For all connectors) -->
+      <div class="flex flex-col gap-1.5 p-1">
+        <div class="flex items-center justify-between">
+          <label for="wb-connector-label-input" class="flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-wider text-ink">
+            <AppIcon fallback="ph:tag" :size="13" class="text-primary" />
+            <span>Connector Label</span>
+          </label>
+          <button
+            v-if="selectedConnectorRelationInfo && selectedConnectorText.trim()"
+            type="button"
+            class="text-[10px] font-medium text-primary hover:underline transition-colors"
+            title="Revert to displaying the linked relation name"
+            @click.stop="resetConnectorTextToRelation"
+          >
+            Use relation name
+          </button>
+        </div>
+
+        <div class="relative flex items-center">
+          <input
+            id="wb-connector-label-input"
+            ref="connectorLabelInputRef"
+            v-model="selectedConnectorText"
+            type="text"
+            :placeholder="
+              selectedConnectorRelationInfo
+                ? `Default: ${selectedConnectorRelationInfo.displayLabel}`
+                : 'Connector label (e.g. Depends on, calls…)'
+            "
+            class="w-full rounded-lg border border-line bg-surface px-2.5 py-1.5 pr-7 text-xs text-ink outline-none focus:border-primary placeholder:text-ink-faint"
+            @focus="onConnectorLabelFocus"
+            @blur="commitSelectedConnectorText"
+            @keydown.enter.stop.prevent="onConnectorLabelEnter"
+          />
+          <button
+            v-if="selectedConnectorText"
+            type="button"
+            class="absolute right-2 flex h-4 w-4 items-center justify-center rounded-full text-ink-faint hover:bg-hover hover:text-ink transition-colors"
+            title="Clear label"
+            @click.stop="clearSelectedConnectorText"
+          >
+            <AppIcon fallback="ph:x" :size="10" />
+          </button>
+        </div>
+
+        <p v-if="selectedConnectorRelationInfo && selectedConnectorText.trim()" class="text-[10px] text-ink-soft leading-tight">
+          Custom label overrides displayed name while preserving the <span class="font-semibold text-primary">{{ selectedConnectorRelationInfo.propertyName }}</span> relation in Vasta.
+        </p>
+      </div>
+
+      <div class="h-px bg-line/60 my-1" />
+
       <!-- Unattached connector -->
       <div v-if="!connectorCardPair" class="flex flex-col gap-2 p-1 text-xs">
         <div class="flex items-center gap-1.5 font-bold text-ink text-[11px] uppercase tracking-wider">
-          <AppIcon fallback="ph:link-simple" :size="14" class="text-primary" />
+          <AppIcon fallback="ph:link-simple" :size="13" class="text-primary" />
           <span>Object Relation</span>
         </div>
-        <p class="text-ink-soft leading-snug">
-          Snap both ends of this line to object cards to link them.
+        <p class="text-ink-soft leading-snug text-[11px]">
+          Snap both ends of this line to object cards to link them in Vasta.
         </p>
         <div class="flex items-center justify-between text-[11px] pt-1.5 border-t border-line/60">
           <span :class="selectedConnector?.startAnchor?.targetKind === 'card' ? 'text-emerald-600 dark:text-emerald-400 font-medium' : 'text-ink-faint'">
-            Start: {{ selectedConnector?.startAnchor?.targetKind === 'card' ? 'Card ✓' : 'Unattached' }}
+            Start: {{ formatAnchorTarget(selectedConnector?.startAnchor) }}
           </span>
           <span :class="selectedConnector?.endAnchor?.targetKind === 'card' ? 'text-emerald-600 dark:text-emerald-400 font-medium' : 'text-ink-faint'">
-            End: {{ selectedConnector?.endAnchor?.targetKind === 'card' ? 'Card ✓' : 'Unattached' }}
+            End: {{ formatAnchorTarget(selectedConnector?.endAnchor) }}
           </span>
         </div>
       </div>

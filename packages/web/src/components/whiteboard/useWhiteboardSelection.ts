@@ -21,6 +21,7 @@ import {
 import type {
   AnchorTargetKind,
   CardContentMode,
+  ConnectorAnchor,
   InkStroke,
   LineCurvature,
   LineTermination,
@@ -1637,6 +1638,51 @@ export function useWhiteboardSelection(opts: UseWhiteboardSelectionOptions) {
     return s ? getConnectorRelationInfo(s) : null
   })
 
+  const selectedConnectorText = computed<string>({
+    get() {
+      return selectedConnector.value?.text ?? ''
+    },
+    set(val: string) {
+      const s = selectedConnector.value
+      if (!s) return
+      if (!val) {
+        delete s.text
+      } else {
+        s.text = val
+      }
+      notifyChange()
+    },
+  })
+
+  function commitSelectedConnectorText() {
+    pushHistory()
+    notifyChange()
+  }
+
+  function resetConnectorTextToRelation() {
+    const s = selectedConnector.value
+    if (!s) return
+    delete s.text
+    pushHistory()
+    notifyChange()
+  }
+
+  function clearSelectedConnectorText() {
+    const s = selectedConnector.value
+    if (!s) return
+    delete s.text
+    pushHistory()
+    notifyChange()
+  }
+
+  function formatAnchorTarget(anchor?: ConnectorAnchor): string {
+    if (!anchor || !anchorTargetId(anchor)) return 'Unattached'
+    if (anchor.targetKind === 'card') return 'Card ✓'
+    if (anchor.targetKind === 'shape') return 'Shape'
+    if (anchor.targetKind === 'sticky') return 'Sticky Note'
+    return 'Attached'
+  }
+
   const preferredRelationMode = ref<'forward' | 'inverse' | 'two-way'>('forward')
 
   const relationDirectionMode = computed<'forward' | 'inverse' | 'two-way'>({
@@ -2049,6 +2095,11 @@ export function useWhiteboardSelection(opts: UseWhiteboardSelectionOptions) {
     toggleCardShowContent,
     toggleCardProperty,
     selectedConnector,
+    selectedConnectorText,
+    commitSelectedConnectorText,
+    resetConnectorTextToRelation,
+    clearSelectedConnectorText,
+    formatAnchorTarget,
     connectorCardPair,
     connectorRelationOptions,
     getConnectorRelationInfo,

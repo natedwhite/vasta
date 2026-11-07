@@ -303,10 +303,15 @@ function resolveRelationLabel(shape: ShapeElement, cards: ObjectCardElement[]): 
 function elementsWithResolvedRelations(data: WhiteboardData): BoardElement[] {
   const shapeById = new Map(data.shapes.map((s) => [s.id, s]))
   return whiteboardDataToElements(data).map((e) => {
-    if (e.kind !== 'arrow' || !e.relation) return e
+    if (e.kind !== 'arrow') return e
     const shape = shapeById.get(e.id)
-    const label = shape ? resolveRelationLabel(shape, data.cards) : null
-    return label ? { ...e, relation: label } : e
+    const relLabel = shape ? resolveRelationLabel(shape, data.cards) : null
+    const label = e.label || relLabel || undefined
+    return {
+      ...e,
+      ...(relLabel ? { relation: relLabel } : {}),
+      ...(label ? { label } : {}),
+    }
   })
 }
 
