@@ -263,7 +263,7 @@ onBeforeUnmount(() => {
             transform: card.rotation ? `rotate(${card.rotation}deg)` : undefined,
             transformOrigin: 'center center',
             boxShadow: selected ? '0 0 0 2px #3b82f6' : undefined,
-            zIndex: card.zIndex,
+            zIndex: card.zIndex ?? 100,
           }
     "
   >

@@ -7,8 +7,8 @@ import AppIcon from '../AppIcon.vue'
 import { api } from '../../lib/api.ts'
 import { onChange } from '../../lib/events.ts'
 import { requestSummaries, summaryOf, typesById } from '../../lib/state.ts'
-import { getConnectorGeometry, getShapeFill, getStrokeDash, isLine, shapePath, stickyStyle } from './shapes.ts'
-import type { ShapeElement, WhiteboardData, WhiteboardScene } from './types.ts'
+import { getConnectorGeometry, getShapeFill, getStrokeDash, isLine, shapePath, stickyStyle, type ConnectorGeometry } from './shapes.ts'
+import type { InkStroke, ObjectCardElement, ShapeElement, StickyElement, WhiteboardData, WhiteboardScene } from './types.ts'
 import WhiteboardObjectCard from './WhiteboardObjectCard.vue'
 
 const props = withDefaults(
@@ -115,18 +115,58 @@ const activeSelectValue = computed(() => {
   return currentScene.value.id
 })
 
-const renderedShapes = computed(() =>
-  (data.value?.shapes ?? [])
-    .map((s) => {
-      const line = isLine(s)
-      return {
-        shape: s,
-        line,
-        zIndex: s.zIndex ?? (line ? 0 : 10),
-        connector: line ? getConnectorGeometry(s) : null,
-      }
+type PreviewCanvasItem =
+  | { kind: 'stroke'; item: InkStroke; zIndex: number }
+  | { kind: 'shape'; item: ShapeElement; line: boolean; zIndex: number; connector: ConnectorGeometry | null }
+  | { kind: 'sticky'; item: StickyElement; zIndex: number; palette: ReturnType<typeof stickyStyle> }
+  | { kind: 'card'; item: ObjectCardElement; zIndex: number }
+
+const renderedPreviewItems = computed<PreviewCanvasItem[]>(() => {
+  const items: PreviewCanvasItem[] = []
+
+  for (const s of data.value?.strokes ?? []) {
+    items.push({
+      kind: 'stroke',
+      item: s,
+      zIndex: Math.max(s.zIndex ?? 100, 100),
     })
-    .sort((a, b) => a.zIndex - b.zIndex),
+  }
+
+  for (const s of data.value?.shapes ?? []) {
+    const line = isLine(s)
+    items.push({
+      kind: 'shape',
+      item: s,
+      line,
+      zIndex: line ? Math.min(s.zIndex ?? 1, 99) : Math.max(s.zIndex ?? 100, 100),
+      connector: line ? getConnectorGeometry(s) : null,
+    })
+  }
+
+  for (const st of data.value?.stickies ?? []) {
+    items.push({
+      kind: 'sticky',
+      item: st,
+      zIndex: Math.max(st.zIndex ?? 100, 100),
+      palette: stickyStyle(st.color),
+    })
+  }
+
+  for (const c of data.value?.cards ?? []) {
+    items.push({
+      kind: 'card',
+      item: c,
+      zIndex: Math.max(c.zIndex ?? 100, 100),
+    })
+  }
+
+  return items.sort((a, b) => a.zIndex - b.zIndex)
+})
+
+const renderedConnectors = computed(() =>
+  renderedPreviewItems.value
+    .filter((e): e is Extract<PreviewCanvasItem, { kind: 'shape' }> => e.kind === 'shape' && e.line && !!e.connector)
+    .map((e) => ({ shape: e.item, connector: e.connector! }))
 )
 
 function getConnectorLabel(s: ShapeElement): string | null {
@@ -140,13 +180,6 @@ function getConnectorLabel(s: ShapeElement): string | null {
   const prop = ownerType?.properties.find((p) => p.id === s.relation!.propertyId)
   return prop?.name || null
 }
-
-const renderedStickies = computed(() =>
-  (data.value?.stickies ?? []).map((s) => ({
-    sticky: s,
-    palette: stickyStyle(s.color),
-  })),
-)
 
 /** The box around everything on the board, with a margin, or the user's custom thumbnailRect / selected Scene. */
 const box = computed(() => {
@@ -217,126 +250,128 @@ function open() {
     @dblclick="open"
   >
     <svg class="h-full w-full text-ink" :viewBox="`${box.x} ${box.y} ${box.w} ${box.h}`" preserveAspectRatio="xMidYMid meet">
-      <!-- Ink Strokes -->
-      <path
-        v-for="s in data?.strokes ?? []"
-        :key="s.id"
-        :d="path(s.points)"
-        :stroke="s.color"
-        :stroke-width="s.width"
-        :stroke-dasharray="getStrokeDash(s.style)"
-        :opacity="s.style === 'marker' ? 0.45 : 1"
-        stroke-linecap="round"
-        stroke-linejoin="round"
-        fill="none"
-      />
-      <!-- Shapes & Connectors -->
-      <g
-        v-for="{ shape: s, line, connector } in renderedShapes"
-        :key="s.id"
-        :transform="!line && s.rotation ? `rotate(${s.rotation} ${s.x + s.width / 2} ${s.y + s.height / 2})` : undefined"
-      >
-        <template v-if="connector">
-          <path
-            :d="connector.shaftPath"
-            :stroke="s.color"
-            :stroke-width="s.strokeWidth || 2.5"
-            :stroke-dasharray="getStrokeDash(s.strokeStyle)"
-            stroke-linecap="round"
-            stroke-linejoin="round"
-            fill="none"
-          />
-          <path
-            v-if="connector.startHead && connector.startHeadType !== 'dot'"
-            :d="connector.startHead"
-            :fill="s.color"
-            :stroke="s.color"
-            stroke-width="1"
-          />
-          <path
-            v-if="connector.endHead && connector.endHeadType !== 'dot'"
-            :d="connector.endHead"
-            :fill="s.color"
-            :stroke="s.color"
-            stroke-width="1"
-          />
-        </template>
-        <template v-else>
-          <path
-            :d="shapePath(s)"
-            :stroke="s.color"
-            :stroke-width="s.strokeWidth || 2.5"
-            :stroke-dasharray="getStrokeDash(s.strokeStyle)"
-            :fill="getShapeFill(s)"
-            stroke-linecap="round"
-            stroke-linejoin="round"
-          />
-          <text
-            v-if="s.text?.trim()"
-            :x="s.x + s.width / 2"
-            :y="s.y + s.height / 2 + 5"
-            text-anchor="middle"
-            font-size="13"
-            font-weight="600"
-            :fill="s.fill === 'solid' && !s.fillColor ? '#ffffff' : 'currentColor'"
-          >{{ s.text }}</text>
-        </template>
-      </g>
-      <!-- Stickies -->
-      <g v-for="{ sticky: s, palette } in renderedStickies" :key="s.id">
-        <rect :x="s.x" :y="s.y" :width="s.width" :height="s.height" rx="10" :fill="palette.bg" :stroke="palette.border" />
-        <foreignObject :x="s.x + 8" :y="s.y + 8" :width="s.width - 16" :height="s.height - 16">
-          <div xmlns="http://www.w3.org/1999/xhtml" :style="{ fontSize: '13px', color: s.textColor || palette.text, whiteSpace: 'pre-wrap', overflow: 'hidden', height: '100%' }">{{ s.text }}</div>
-        </foreignObject>
-      </g>
-      <!-- Cards -->
-      <g
-        v-for="c in data?.cards ?? []"
-        :key="c.id"
-        :transform="c.rotation ? `rotate(${c.rotation} ${c.x + c.width / 2} ${c.y + c.height / 2})` : undefined"
-      >
-        <rect
-          :x="c.x"
-          :y="c.y"
-          :width="c.width"
-          :height="c.height"
-          rx="12"
-          fill="var(--color-surface, #ffffff)"
-          stroke="var(--color-line, #e2e8f0)"
-          stroke-width="1.5"
+      <!-- Unified Canvas Elements Rendered in Exact Z-Order -->
+      <template v-for="entry in renderedPreviewItems" :key="entry.kind === 'stroke' ? `str-${entry.item.id}` : entry.kind === 'card' ? `c-${entry.item.id}` : entry.kind === 'sticky' ? `st-${entry.item.id}` : `sh-${entry.item.id}`">
+        <!-- 1. Ink Stroke -->
+        <path
+          v-if="entry.kind === 'stroke'"
+          :d="path(entry.item.points)"
+          :stroke="entry.item.color"
+          :stroke-width="entry.item.width"
+          :stroke-dasharray="getStrokeDash(entry.item.style)"
+          :opacity="entry.item.style === 'marker' ? 0.45 : 1"
+          stroke-linecap="round"
+          stroke-linejoin="round"
+          fill="none"
         />
-        <foreignObject
-          :x="c.x"
-          :y="c.y"
-          :width="c.width"
-          :height="c.height"
-          class="overflow-hidden"
-          style="overflow: hidden;"
+
+        <!-- 2. Shape or Connector -->
+        <g
+          v-else-if="entry.kind === 'shape'"
+          :transform="!entry.line && entry.item.rotation ? `rotate(${entry.item.rotation} ${entry.item.x + entry.item.width / 2} ${entry.item.y + entry.item.height / 2})` : undefined"
         >
-          <div
-            xmlns="http://www.w3.org/1999/xhtml"
-            class="h-full w-full overflow-hidden"
-            style="width: 100%; height: 100%; box-sizing: border-box; overflow: hidden;"
-          >
-            <WhiteboardObjectCard
-              :card="c"
-              :interactive="false"
-              :embedded="true"
+          <template v-if="entry.connector">
+            <path
+              :d="entry.connector.shaftPath"
+              :stroke="entry.item.color"
+              :stroke-width="entry.item.strokeWidth || 2.5"
+              :stroke-dasharray="getStrokeDash(entry.item.strokeStyle)"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              fill="none"
             />
-          </div>
-        </foreignObject>
-      </g>
+            <path
+              v-if="entry.connector.startHead && entry.connector.startHeadType !== 'dot'"
+              :d="entry.connector.startHead"
+              :fill="entry.item.color"
+              :stroke="entry.item.color"
+              stroke-width="1"
+            />
+            <path
+              v-if="entry.connector.endHead && entry.connector.endHeadType !== 'dot'"
+              :d="entry.connector.endHead"
+              :fill="entry.item.color"
+              :stroke="entry.item.color"
+              stroke-width="1"
+            />
+          </template>
+          <template v-else>
+            <path
+              :d="shapePath(entry.item)"
+              :stroke="entry.item.color"
+              :stroke-width="entry.item.strokeWidth || 2.5"
+              :stroke-dasharray="getStrokeDash(entry.item.strokeStyle)"
+              :fill="getShapeFill(entry.item)"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            />
+            <text
+              v-if="entry.item.text?.trim()"
+              :x="entry.item.x + entry.item.width / 2"
+              :y="entry.item.y + entry.item.height / 2 + 5"
+              text-anchor="middle"
+              font-size="13"
+              font-weight="600"
+              :fill="entry.item.fill === 'solid' && !entry.item.fillColor ? '#ffffff' : 'currentColor'"
+            >{{ entry.item.text }}</text>
+          </template>
+        </g>
+
+        <!-- 3. Sticky Note -->
+        <g v-else-if="entry.kind === 'sticky'">
+          <rect :x="entry.item.x" :y="entry.item.y" :width="entry.item.width" :height="entry.item.height" rx="10" :fill="entry.palette.bg" :stroke="entry.palette.border" />
+          <foreignObject :x="entry.item.x + 8" :y="entry.item.y + 8" :width="entry.item.width - 16" :height="entry.item.height - 16">
+            <div xmlns="http://www.w3.org/1999/xhtml" :style="{ fontSize: '13px', color: entry.item.textColor || entry.palette.text, whiteSpace: 'pre-wrap', overflow: 'hidden', height: '100%' }">{{ entry.item.text }}</div>
+          </foreignObject>
+        </g>
+
+        <!-- 4. Vasta Card -->
+        <g
+          v-else-if="entry.kind === 'card'"
+          :transform="entry.item.rotation ? `rotate(${entry.item.rotation} ${entry.item.x + entry.item.width / 2} ${entry.item.y + entry.item.height / 2})` : undefined"
+        >
+          <rect
+            :x="entry.item.x"
+            :y="entry.item.y"
+            :width="entry.item.width"
+            :height="entry.item.height"
+            rx="12"
+            fill="var(--color-surface, #ffffff)"
+            stroke="var(--color-line, #e2e8f0)"
+            stroke-width="1.5"
+          />
+          <foreignObject
+            :x="entry.item.x"
+            :y="entry.item.y"
+            :width="entry.item.width"
+            :height="entry.item.height"
+            class="overflow-hidden"
+            style="overflow: hidden;"
+          >
+            <div
+              xmlns="http://www.w3.org/1999/xhtml"
+              class="h-full w-full overflow-hidden"
+              style="width: 100%; height: 100%; box-sizing: border-box; overflow: hidden;"
+            >
+              <WhiteboardObjectCard
+                :card="entry.item"
+                :interactive="false"
+                :embedded="true"
+              />
+            </div>
+          </foreignObject>
+        </g>
+      </template>
+
       <!-- Dot Terminations (on top of cards, stickies, and 2D shapes) -->
-      <g v-for="{ shape: s, line, connector } in renderedShapes" :key="`dot-${s.id}`">
-        <template v-if="line && connector">
-          <path v-if="connector.startDot" :d="connector.startDot" :fill="s.color" stroke="none" />
-          <path v-if="connector.endDot" :d="connector.endDot" :fill="s.color" stroke="none" />
-        </template>
+      <g v-for="{ shape: s, connector } in renderedConnectors" :key="`dot-${s.id}`">
+        <path v-if="connector.startDot" :d="connector.startDot" :fill="s.color" stroke="none" />
+        <path v-if="connector.endDot" :d="connector.endDot" :fill="s.color" stroke="none" />
       </g>
       <!-- Connector Text Labels (on top of cards and shapes) -->
-      <template v-for="{ shape: s, line, connector } in renderedShapes" :key="`lbl-${s.id}`">
+      <template v-for="{ shape: s, connector } in renderedConnectors" :key="`lbl-${s.id}`">
         <text
-          v-if="line && connector && getConnectorLabel(s)"
+          v-if="getConnectorLabel(s)"
           :x="connector.labelPoint.x"
           :y="connector.labelPoint.y - 6"
           text-anchor="middle"

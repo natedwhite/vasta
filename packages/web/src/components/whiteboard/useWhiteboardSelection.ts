@@ -1047,47 +1047,106 @@ export function useWhiteboardSelection(opts: UseWhiteboardSelectionOptions) {
     if (!selected.value.length) return
     renormalizeZIndices()
     const raw = getAllRawItems()
-    const nonSelected = raw.filter((e) => !selected.value.includes(e.key)).sort((a, b) => (a.item.zIndex ?? 0) - (b.item.zIndex ?? 0))
-    const sel = raw.filter((e) => selected.value.includes(e.key)).sort((a, b) => (a.item.zIndex ?? 0) - (b.item.zIndex ?? 0))
-    const combined = [...nonSelected, ...sel]
-    combined.forEach((entry, idx) => {
-      entry.item.zIndex = idx + 1
-    })
+    const selKeys = new Set(selected.value)
+
+    const lines = raw.filter((e) => e.kind === 'shape' && isLine(e.item as ShapeElement)).sort((a, b) => (a.item.zIndex ?? 0) - (b.item.zIndex ?? 0))
+    const nonLines = raw.filter((e) => e.kind !== 'shape' || !isLine(e.item as ShapeElement)).sort((a, b) => (a.item.zIndex ?? 0) - (b.item.zIndex ?? 0))
+
+    if (lines.some((e) => selKeys.has(e.key))) {
+      const sel = lines.filter((e) => selKeys.has(e.key))
+      const unsel = lines.filter((e) => !selKeys.has(e.key))
+      const reordered = [...unsel, ...sel]
+      reordered.forEach((entry, idx) => {
+        entry.item.zIndex = idx + 1
+      })
+    }
+
+    if (nonLines.some((e) => selKeys.has(e.key))) {
+      const sel = nonLines.filter((e) => selKeys.has(e.key))
+      const unsel = nonLines.filter((e) => !selKeys.has(e.key))
+      const reordered = [...unsel, ...sel]
+      reordered.forEach((entry, idx) => {
+        entry.item.zIndex = 100 + idx
+      })
+    }
+
     pushHistory()
+    notifyChange()
   }
 
   function sendToBack() {
     if (!selected.value.length) return
     renormalizeZIndices()
     const raw = getAllRawItems()
-    const sel = raw.filter((e) => selected.value.includes(e.key)).sort((a, b) => (a.item.zIndex ?? 0) - (b.item.zIndex ?? 0))
-    const nonSelected = raw.filter((e) => !selected.value.includes(e.key)).sort((a, b) => (a.item.zIndex ?? 0) - (b.item.zIndex ?? 0))
-    const combined = [...sel, ...nonSelected]
-    combined.forEach((entry, idx) => {
-      entry.item.zIndex = idx + 1
-    })
+    const selKeys = new Set(selected.value)
+
+    const lines = raw.filter((e) => e.kind === 'shape' && isLine(e.item as ShapeElement)).sort((a, b) => (a.item.zIndex ?? 0) - (b.item.zIndex ?? 0))
+    const nonLines = raw.filter((e) => e.kind !== 'shape' || !isLine(e.item as ShapeElement)).sort((a, b) => (a.item.zIndex ?? 0) - (b.item.zIndex ?? 0))
+
+    if (lines.some((e) => selKeys.has(e.key))) {
+      const sel = lines.filter((e) => selKeys.has(e.key))
+      const unsel = lines.filter((e) => !selKeys.has(e.key))
+      const reordered = [...sel, ...unsel]
+      reordered.forEach((entry, idx) => {
+        entry.item.zIndex = idx + 1
+      })
+    }
+
+    if (nonLines.some((e) => selKeys.has(e.key))) {
+      const sel = nonLines.filter((e) => selKeys.has(e.key))
+      const unsel = nonLines.filter((e) => !selKeys.has(e.key))
+      const reordered = [...sel, ...unsel]
+      reordered.forEach((entry, idx) => {
+        entry.item.zIndex = 100 + idx
+      })
+    }
+
     pushHistory()
+    notifyChange()
   }
 
   function bringForward() {
     if (!selected.value.length) return
     renormalizeZIndices()
     const raw = getAllRawItems()
-    raw.sort((a, b) => (a.item.zIndex ?? 0) - (b.item.zIndex ?? 0))
-    let changed = false
-    for (let i = raw.length - 2; i >= 0; i--) {
-      if (selected.value.includes(raw[i]!.key) && !selected.value.includes(raw[i + 1]!.key)) {
-        const temp = raw[i]!
-        raw[i] = raw[i + 1]!
-        raw[i + 1] = temp
-        changed = true
+    const selKeys = new Set(selected.value)
+
+    const lines = raw.filter((e) => e.kind === 'shape' && isLine(e.item as ShapeElement)).sort((a, b) => (a.item.zIndex ?? 0) - (b.item.zIndex ?? 0))
+    const nonLines = raw.filter((e) => e.kind !== 'shape' || !isLine(e.item as ShapeElement)).sort((a, b) => (a.item.zIndex ?? 0) - (b.item.zIndex ?? 0))
+
+    let linesChanged = false
+    for (let i = lines.length - 2; i >= 0; i--) {
+      if (selKeys.has(lines[i]!.key) && !selKeys.has(lines[i + 1]!.key)) {
+        const temp = lines[i]!
+        lines[i] = lines[i + 1]!
+        lines[i + 1] = temp
+        linesChanged = true
       }
     }
-    if (changed) {
-      raw.forEach((entry, idx) => {
+    if (linesChanged) {
+      lines.forEach((entry, idx) => {
         entry.item.zIndex = idx + 1
       })
+    }
+
+    let nonLinesChanged = false
+    for (let i = nonLines.length - 2; i >= 0; i--) {
+      if (selKeys.has(nonLines[i]!.key) && !selKeys.has(nonLines[i + 1]!.key)) {
+        const temp = nonLines[i]!
+        nonLines[i] = nonLines[i + 1]!
+        nonLines[i + 1] = temp
+        nonLinesChanged = true
+      }
+    }
+    if (nonLinesChanged) {
+      nonLines.forEach((entry, idx) => {
+        entry.item.zIndex = 100 + idx
+      })
+    }
+
+    if (linesChanged || nonLinesChanged) {
       pushHistory()
+      notifyChange()
     }
   }
 
@@ -1095,21 +1154,44 @@ export function useWhiteboardSelection(opts: UseWhiteboardSelectionOptions) {
     if (!selected.value.length) return
     renormalizeZIndices()
     const raw = getAllRawItems()
-    raw.sort((a, b) => (a.item.zIndex ?? 0) - (b.item.zIndex ?? 0))
-    let changed = false
-    for (let i = 1; i < raw.length; i++) {
-      if (selected.value.includes(raw[i]!.key) && !selected.value.includes(raw[i - 1]!.key)) {
-        const temp = raw[i]!
-        raw[i] = raw[i - 1]!
-        raw[i - 1] = temp
-        changed = true
+    const selKeys = new Set(selected.value)
+
+    const lines = raw.filter((e) => e.kind === 'shape' && isLine(e.item as ShapeElement)).sort((a, b) => (a.item.zIndex ?? 0) - (b.item.zIndex ?? 0))
+    const nonLines = raw.filter((e) => e.kind !== 'shape' || !isLine(e.item as ShapeElement)).sort((a, b) => (a.item.zIndex ?? 0) - (b.item.zIndex ?? 0))
+
+    let linesChanged = false
+    for (let i = 1; i < lines.length; i++) {
+      if (selKeys.has(lines[i]!.key) && !selKeys.has(lines[i - 1]!.key)) {
+        const temp = lines[i]!
+        lines[i] = lines[i - 1]!
+        lines[i - 1] = temp
+        linesChanged = true
       }
     }
-    if (changed) {
-      raw.forEach((entry, idx) => {
+    if (linesChanged) {
+      lines.forEach((entry, idx) => {
         entry.item.zIndex = idx + 1
       })
+    }
+
+    let nonLinesChanged = false
+    for (let i = 1; i < nonLines.length; i++) {
+      if (selKeys.has(nonLines[i]!.key) && !selKeys.has(nonLines[i - 1]!.key)) {
+        const temp = nonLines[i]!
+        nonLines[i] = nonLines[i - 1]!
+        nonLines[i - 1] = temp
+        nonLinesChanged = true
+      }
+    }
+    if (nonLinesChanged) {
+      nonLines.forEach((entry, idx) => {
+        entry.item.zIndex = 100 + idx
+      })
+    }
+
+    if (linesChanged || nonLinesChanged) {
       pushHistory()
+      notifyChange()
     }
   }
 

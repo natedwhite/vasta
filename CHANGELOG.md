@@ -38,6 +38,7 @@ GitHub release page.
 
 ### Fixed
 
+- **Whiteboard unified z-plane layering across drawings, cards, stickies, and shapes.** Resolved an issue where layer ordering actions (Bring to Front, Send to Back, Forward, Backward) reset object z-indices into the connector range (1..99) and collided at 100, preventing freehand ink drawings from going below cards and other canvas objects. All canvas objects (drawings, 2D shapes, sticky notes, and Vasta cards) now share a unified z-plane (100+) allowing full bidirectional layering between them, while connectors remain safely underneath on the connector plane (1..99). Also unified SVG miniature previews and vector exports to render all objects in their exact z-index order.
 - **Whiteboard thumbnail and embed object card positioning.** Object cards in whiteboard thumbnails (gallery cards and page embeds) now render with native SVG card rectangles and properly bounded content containers, resolving a WebKit/Safari bug where `position: absolute` inside SVG `<foreignObject>` caused Vasta object cards to detach and jump to the top-left of the preview. Also synchronized actual rendered card heights to whiteboard card elements.
 
 ## 0.6.1 (2026-11-06)

@@ -21,6 +21,7 @@ import {
 } from '@vasta/core'
 import { getConnectorGeometry, stickyStyle } from '../components/whiteboard/shapes.ts'
 import type {
+  InkStroke,
   ObjectCardElement,
   Point,
   ShapeElement,
@@ -476,103 +477,112 @@ export function exportWhiteboardToSvg(data: WhiteboardData, padding = 48): strin
     }
   }
 
-  // 3. 2D Shapes
-  for (const s of data.shapes) {
-    if (s.type === 'line' || s.type === 'arrow') continue
-    const b = normBox(s)
-    const cx = b.x + b.w / 2
-    const cy = b.y + b.h / 2
-    const stroke = s.color || '#3b82f6'
-    const fill =
-      s.fill === 'none'
-        ? 'none'
-        : s.fill === 'white'
-          ? '#ffffff'
-          : s.fill === 'solid'
-            ? s.fillColor || stroke
-            : s.fillColor
-              ? `${s.fillColor}28`
-              : `${stroke}1a`
-    const dash = s.strokeStyle === 'dashed' ? ' stroke-dasharray="8 6"' : s.strokeStyle === 'dotted' ? ' stroke-dasharray="3 5"' : ''
-    const sw = s.strokeWidth ?? 2.5
+  // 3. Unified canvas objects sorted by z-index (2D shapes, stickies, cards, ink strokes)
+  type ExportCanvasObject =
+    | { kind: 'shape'; item: ShapeElement; zIndex: number }
+    | { kind: 'sticky'; item: StickyElement; zIndex: number }
+    | { kind: 'card'; item: ObjectCardElement; zIndex: number }
+    | { kind: 'stroke'; item: InkStroke; zIndex: number }
 
-    let geom = `<rect x="${b.x}" y="${b.y}" width="${b.w}" height="${b.h}" rx="10" fill="${fill}" stroke="${stroke}" stroke-width="${sw}"${dash} />`
-    if (s.type === 'ellipse') {
-      geom = `<ellipse cx="${cx}" cy="${cy}" rx="${b.w / 2}" ry="${b.h / 2}" fill="${fill}" stroke="${stroke}" stroke-width="${sw}"${dash} />`
-    } else if (s.type === 'diamond') {
-      geom = `<polygon points="${cx},${b.y} ${b.x + b.w},${cy} ${cx},${b.y + b.h} ${b.x},${cy}" fill="${fill}" stroke="${stroke}" stroke-width="${sw}" stroke-linejoin="round"${dash} />`
-    } else if (s.type === 'triangle') {
-      geom = `<polygon points="${cx},${b.y} ${b.x + b.w},${b.y + b.h} ${b.x},${b.y + b.h}" fill="${fill}" stroke="${stroke}" stroke-width="${sw}" stroke-linejoin="round"${dash} />`
+  const unifiedObjects: ExportCanvasObject[] = [
+    ...data.shapes.filter((s) => s.type !== 'line' && s.type !== 'arrow').map((s) => ({ kind: 'shape' as const, item: s, zIndex: Math.max(s.zIndex ?? 100, 100) })),
+    ...data.stickies.map((st) => ({ kind: 'sticky' as const, item: st, zIndex: Math.max(st.zIndex ?? 100, 100) })),
+    ...data.cards.map((c) => ({ kind: 'card' as const, item: c, zIndex: Math.max(c.zIndex ?? 100, 100) })),
+    ...data.strokes.map((str) => ({ kind: 'stroke' as const, item: str, zIndex: Math.max(str.zIndex ?? 100, 100) })),
+  ].sort((a, b) => a.zIndex - b.zIndex)
+
+  for (const obj of unifiedObjects) {
+    if (obj.kind === 'shape') {
+      const s = obj.item
+      const b = normBox(s)
+      const cx = b.x + b.w / 2
+      const cy = b.y + b.h / 2
+      const stroke = s.color || '#3b82f6'
+      const fill =
+        s.fill === 'none'
+          ? 'none'
+          : s.fill === 'white'
+            ? '#ffffff'
+            : s.fill === 'solid'
+              ? s.fillColor || stroke
+              : s.fillColor
+                ? `${s.fillColor}28`
+                : `${stroke}1a`
+      const dash = s.strokeStyle === 'dashed' ? ' stroke-dasharray="8 6"' : s.strokeStyle === 'dotted' ? ' stroke-dasharray="3 5"' : ''
+      const sw = s.strokeWidth ?? 2.5
+
+      let geom = `<rect x="${b.x}" y="${b.y}" width="${b.w}" height="${b.h}" rx="10" fill="${fill}" stroke="${stroke}" stroke-width="${sw}"${dash} />`
+      if (s.type === 'ellipse') {
+        geom = `<ellipse cx="${cx}" cy="${cy}" rx="${b.w / 2}" ry="${b.h / 2}" fill="${fill}" stroke="${stroke}" stroke-width="${sw}"${dash} />`
+      } else if (s.type === 'diamond') {
+        geom = `<polygon points="${cx},${b.y} ${b.x + b.w},${cy} ${cx},${b.y + b.h} ${b.x},${cy}" fill="${fill}" stroke="${stroke}" stroke-width="${sw}" stroke-linejoin="round"${dash} />`
+      } else if (s.type === 'triangle') {
+        geom = `<polygon points="${cx},${b.y} ${b.x + b.w},${b.y + b.h} ${b.x},${b.y + b.h}" fill="${fill}" stroke="${stroke}" stroke-width="${sw}" stroke-linejoin="round"${dash} />`
+      }
+
+      parts.push(`  <g>`)
+      parts.push(`    ${geom}`)
+      if (s.text?.trim()) {
+        const textFill = s.fill === 'solid' && !s.fillColor ? '#ffffff' : '#0f172a'
+        const lines = s.text.trim().split(/\r?\n/)
+        const startY = cy - ((lines.length - 1) * 18) / 2 + 5
+        lines.forEach((line, idx) => {
+          parts.push(
+            `    <text x="${cx}" y="${startY + idx * 18}" text-anchor="middle" font-size="14" font-weight="600" fill="${textFill}">${escapeXml(line)}</text>`
+          )
+        })
+      }
+      parts.push(`  </g>`)
+    } else if (obj.kind === 'sticky') {
+      const st = obj.item
+      const pal = stickyStyle(st.color)
+      parts.push(`  <g>`)
+      parts.push(
+        `    <rect x="${st.x}" y="${st.y}" width="${st.width}" height="${st.height}" rx="12" fill="${pal.bg}" stroke="${pal.border}" stroke-width="1.5" />`
+      )
+      if (st.text?.trim()) {
+        const lines = st.text.trim().split(/\r?\n/)
+        lines.slice(0, 7).forEach((line, idx) => {
+          parts.push(
+            `    <text x="${st.x + 16}" y="${st.y + 30 + idx * 19}" font-size="13" font-weight="500" fill="${st.textColor || pal.text}">${escapeXml(line.slice(0, 36))}</text>`
+          )
+        })
+      }
+      parts.push(`  </g>`)
+    } else if (obj.kind === 'card') {
+      const c = obj.item
+      const typeLabel = c.typeName || 'Page'
+      const title = c.title || 'Untitled'
+      const pillW = Math.min(c.width - 28, Math.max(48, typeLabel.length * 7 + 18))
+      parts.push(
+        `  <g>`,
+        `    <rect x="${c.x}" y="${c.y}" width="${c.width}" height="${c.height}" rx="12" fill="#ffffff" stroke="#cbd5e1" stroke-width="1.5" />`,
+        `    <rect x="${c.x + 14}" y="${c.y + 14}" width="${pillW}" height="20" rx="6" fill="#eff6ff" />`,
+        `    <text x="${c.x + 22}" y="${c.y + 28}" font-size="10" font-weight="600" fill="#2563eb">${escapeXml(typeLabel)}</text>`,
+        `    <text x="${c.x + 14}" y="${c.y + 56}" font-size="14" font-weight="600" fill="#0f172a">${escapeXml(title.length > 34 ? `${title.slice(0, 33)}…` : title)}</text>`,
+        `  </g>`
+      )
+    } else if (obj.kind === 'stroke') {
+      const stroke = obj.item
+      if (!stroke.points?.length) continue
+      const d = getStrokePath(stroke.points)
+      const isHighlighter = stroke.penType === 'highlighter' || stroke.style === 'marker'
+      const sw = isHighlighter ? stroke.width * 2.6 : stroke.width
+      const opacity = isHighlighter ? ' opacity="0.35"' : ''
+      const dash =
+        stroke.style === 'dashed'
+          ? ` stroke-dasharray="${stroke.width * 2.5} ${stroke.width * 1.8}"`
+          : stroke.style === 'dotted'
+            ? ` stroke-dasharray="1 ${stroke.width * 2}"`
+            : ''
+      parts.push(
+        `  <path d="${d}" fill="none" stroke="${stroke.color || '#1e293b'}" stroke-width="${sw}" stroke-linecap="round" stroke-linejoin="round"${opacity}${dash} />`
+      )
     }
-
-    parts.push(`  <g>`)
-    parts.push(`    ${geom}`)
-    if (s.text?.trim()) {
-      const textFill = s.fill === 'solid' && !s.fillColor ? '#ffffff' : '#0f172a'
-      const lines = s.text.trim().split(/\r?\n/)
-      const startY = cy - ((lines.length - 1) * 18) / 2 + 5
-      lines.forEach((line, idx) => {
-        parts.push(
-          `    <text x="${cx}" y="${startY + idx * 18}" text-anchor="middle" font-size="14" font-weight="600" fill="${textFill}">${escapeXml(line)}</text>`
-        )
-      })
-    }
-    parts.push(`  </g>`)
-  }
-
-  // 4. Sticky Notes
-  for (const st of data.stickies) {
-    const pal = stickyStyle(st.color)
-    parts.push(`  <g>`)
-    parts.push(
-      `    <rect x="${st.x}" y="${st.y}" width="${st.width}" height="${st.height}" rx="12" fill="${pal.bg}" stroke="${pal.border}" stroke-width="1.5" />`
-    )
-    if (st.text?.trim()) {
-      const lines = st.text.trim().split(/\r?\n/)
-      lines.slice(0, 7).forEach((line, idx) => {
-        parts.push(
-          `    <text x="${st.x + 16}" y="${st.y + 30 + idx * 19}" font-size="13" font-weight="500" fill="${st.textColor || pal.text}">${escapeXml(line.slice(0, 36))}</text>`
-        )
-      })
-    }
-    parts.push(`  </g>`)
-  }
-
-  // 5. Vasta Object Cards
-  for (const c of data.cards) {
-    const typeLabel = c.typeName || 'Page'
-    const title = c.title || 'Untitled'
-    const pillW = Math.min(c.width - 28, Math.max(48, typeLabel.length * 7 + 18))
-    parts.push(
-      `  <g>`,
-      `    <rect x="${c.x}" y="${c.y}" width="${c.width}" height="${c.height}" rx="12" fill="#ffffff" stroke="#cbd5e1" stroke-width="1.5" />`,
-      `    <rect x="${c.x + 14}" y="${c.y + 14}" width="${pillW}" height="20" rx="6" fill="#eff6ff" />`,
-      `    <text x="${c.x + 22}" y="${c.y + 28}" font-size="10" font-weight="600" fill="#2563eb">${escapeXml(typeLabel)}</text>`,
-      `    <text x="${c.x + 14}" y="${c.y + 56}" font-size="14" font-weight="600" fill="#0f172a">${escapeXml(title.length > 34 ? `${title.slice(0, 33)}…` : title)}</text>`,
-      `  </g>`
-    )
   }
 
   parts.push(...dotOverlayParts)
   parts.push(...labelOverlayParts)
-
-  // 6. Freehand Ink Strokes
-  for (const stroke of data.strokes) {
-    if (!stroke.points?.length) continue
-    const d = getStrokePath(stroke.points)
-    const isHighlighter = stroke.penType === 'highlighter' || stroke.style === 'marker'
-    const sw = isHighlighter ? stroke.width * 2.6 : stroke.width
-    const opacity = isHighlighter ? ' opacity="0.35"' : ''
-    const dash =
-      stroke.style === 'dashed'
-        ? ` stroke-dasharray="${stroke.width * 2.5} ${stroke.width * 1.8}"`
-        : stroke.style === 'dotted'
-          ? ` stroke-dasharray="1 ${stroke.width * 2}"`
-          : ''
-    parts.push(
-      `  <path d="${d}" fill="none" stroke="${stroke.color || '#1e293b'}" stroke-width="${sw}" stroke-linecap="round" stroke-linejoin="round"${opacity}${dash} />`
-    )
-  }
 
   parts.push(`</svg>`)
   return parts.join('\n')
