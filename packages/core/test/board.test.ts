@@ -6,6 +6,7 @@ import {
   addBoardElements,
   boardContent,
   bringToFront,
+  computeConnectorEndpoints,
   copyElements,
   insideFrame,
   sendToBack,
@@ -272,5 +273,36 @@ describe('boards in the store', () => {
     store.putObject({ ...stored, title: 'Renamed', content: {}, updatedAt: now })
     expect(readBoard(store.loadText('b')!).map((e) => e.id)).toEqual([id])
     expect(store.getObject('b')!.content[BOARD_FIELD]).toBeDefined()
+  })
+})
+
+describe('computeConnectorEndpoints', () => {
+  it('connects facing sides when source is to the left of target', () => {
+    const from = { x: 0, y: 0, w: 200, h: 100 }
+    const to = { x: 400, y: 0, w: 200, h: 100 }
+    const { startSide, endSide } = computeConnectorEndpoints(from, to)
+    expect(startSide).toBe('right')
+    expect(endSide).toBe('left')
+  })
+
+  it('switches sides automatically when source is moved to the right of target', () => {
+    const from = { x: 500, y: 0, w: 200, h: 100 }
+    const to = { x: 100, y: 0, w: 200, h: 100 }
+    const { startSide, endSide } = computeConnectorEndpoints(from, to)
+    expect(startSide).toBe('left')
+    expect(endSide).toBe('right')
+  })
+
+  it('switches sides automatically when source is above or below target', () => {
+    const above = { x: 0, y: 0, w: 200, h: 100 }
+    const below = { x: 0, y: 300, w: 200, h: 100 }
+
+    const res1 = computeConnectorEndpoints(above, below)
+    expect(res1.startSide).toBe('bottom')
+    expect(res1.endSide).toBe('top')
+
+    const res2 = computeConnectorEndpoints(below, above)
+    expect(res2.startSide).toBe('top')
+    expect(res2.endSide).toBe('bottom')
   })
 })

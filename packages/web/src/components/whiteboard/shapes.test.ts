@@ -327,4 +327,25 @@ describe('Whiteboard Connector Geometry', () => {
     expect(geo.shaftPath).toBe('M 200 101.5 L 200 204.5')
     expect(geo.endHead).toBeDefined()
   })
+
+  it('routes curved connector with outer loop clearance when an anchor faces opposite to endpoint', () => {
+    // Start anchor is at top of object, but target is down at y=300
+    const backwardsCurved: ShapeElement = {
+      id: 'conn-curved-loop',
+      type: 'arrow',
+      curvature: 'curved',
+      color: '#000000',
+      x: 100,
+      y: 100,
+      width: 100,
+      height: 200,
+      startAnchor: { targetId: 'card-1', side: 'top', locked: true },
+      endAnchor: { targetId: 'card-2', side: 'top', locked: true },
+    }
+
+    const geo = getConnectorGeometry(backwardsCurved)
+    expect(geo.shaftPath).toContain('Q')
+    // Control point was pushed upward above y=100 (loop-around clearance) so it does not penetrate into the card
+    expect(geo.shaftPath).toMatch(/Q\s+[-0-9.]+\s+([0-9.]+)/)
+  })
 })

@@ -47,6 +47,7 @@ export interface ConnectorAnchor {
   /** Kept for backward compatibility with card-only anchors */
   cardId?: string
   side?: AnchorSide
+  locked?: boolean
 }
 
 export interface ConnectorRelationBinding {

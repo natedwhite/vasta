@@ -393,6 +393,7 @@ export interface WbConnectorAnchor {
   targetKind?: WbAnchorTargetKind
   cardId?: string
   side?: WbAnchorSide
+  locked?: boolean
 }
 
 export interface WbRelationBinding {

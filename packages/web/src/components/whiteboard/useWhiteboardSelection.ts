@@ -1,5 +1,5 @@
 import { computed, nextTick, ref, type ComputedRef, type Ref } from 'vue'
-import type { Id, ObjectSummary, ObjectType, PropertyDef, RelationPropertyDef } from '@vasta/core'
+import { computeConnectorEndpoints, type Id, type ObjectSummary, type ObjectType, type PropertyDef, type RelationPropertyDef } from '@vasta/core'
 import { api } from '../../lib/api.ts'
 import { clone } from '../../lib/clone.ts'
 import { displayTitle } from '../../lib/format.ts'
@@ -7,6 +7,7 @@ import { cachedSummary, notice, primeFromObject, replaceType, summaryOf, typesBy
 import { newId } from './ids.ts'
 import {
   anchorTargetId,
+  bestSideToward,
   distToPolyline,
   getAnchorPoint,
   getConnectorGeometry,
@@ -274,86 +275,152 @@ export function useWhiteboardSelection(opts: UseWhiteboardSelectionOptions) {
       let nextStart = { ...oldStart }
       let nextEnd = { ...oldEnd }
 
-      if (startId && s.startAnchor?.side) {
-        const t = findSnapTarget(startId, s.startAnchor.targetKind)
-        if (t) {
-          nextStart = getAnchorPoint(t, s.startAnchor.side)
-          s.startOrientation = orientationForSide(s.startAnchor.side)
+      const tStart = startId ? findSnapTarget(startId, s.startAnchor?.targetKind) : null
+      const tEnd = endId ? findSnapTarget(endId, s.endAnchor?.targetKind) : null
+
+      if (tStart && tEnd) {
+        const startLocked = !!s.startAnchor?.locked
+        const endLocked = !!s.endAnchor?.locked
+
+        if (!startLocked && !endLocked) {
+          const fromBox = {
+            x: Math.min(tStart.x, tStart.x + tStart.width),
+            y: Math.min(tStart.y, tStart.y + tStart.height),
+            w: Math.abs(tStart.width),
+            h: Math.abs(tStart.height),
+            shape: tStart.shapeType,
+          }
+          const toBox = {
+            x: Math.min(tEnd.x, tEnd.x + tEnd.width),
+            y: Math.min(tEnd.y, tEnd.y + tEnd.height),
+            w: Math.abs(tEnd.width),
+            h: Math.abs(tEnd.height),
+            shape: tEnd.shapeType,
+          }
+          const endpoints = computeConnectorEndpoints(fromBox, toBox)
+          if (s.startAnchor) s.startAnchor.side = endpoints.startSide
+          if (s.endAnchor) s.endAnchor.side = endpoints.endSide
+          nextStart = getAnchorPoint(tStart, endpoints.startSide)
+          nextEnd = getAnchorPoint(tEnd, endpoints.endSide)
+          s.startOrientation = endpoints.startOrientation
+          s.endOrientation = endpoints.endOrientation
+        } else if (startLocked && !endLocked) {
+          const startSide = s.startAnchor?.side || 'right'
+          nextStart = getAnchorPoint(tStart, startSide)
+          s.startOrientation = orientationForSide(startSide)
+          const endSide = bestSideToward(tEnd, nextStart)
+          if (s.endAnchor) s.endAnchor.side = endSide
+          nextEnd = getAnchorPoint(tEnd, endSide)
+          s.endOrientation = orientationForSide(endSide)
+        } else if (!startLocked && endLocked) {
+          const endSide = s.endAnchor?.side || 'left'
+          nextEnd = getAnchorPoint(tEnd, endSide)
+          s.endOrientation = orientationForSide(endSide)
+          const startSide = bestSideToward(tStart, nextEnd)
+          if (s.startAnchor) s.startAnchor.side = startSide
+          nextStart = getAnchorPoint(tStart, startSide)
+          s.startOrientation = orientationForSide(startSide)
+        } else {
+          const startSide = s.startAnchor?.side || 'right'
+          const endSide = s.endAnchor?.side || 'left'
+          nextStart = getAnchorPoint(tStart, startSide)
+          nextEnd = getAnchorPoint(tEnd, endSide)
+          s.startOrientation = orientationForSide(startSide)
+          s.endOrientation = orientationForSide(endSide)
         }
-      }
-      if (endId && s.endAnchor?.side) {
-        const t = findSnapTarget(endId, s.endAnchor.targetKind)
-        if (t) {
-          nextEnd = getAnchorPoint(t, s.endAnchor.side)
-          s.endOrientation = orientationForSide(s.endAnchor.side)
+      } else if (tStart && !tEnd) {
+        if (!s.startAnchor?.locked) {
+          const side = bestSideToward(tStart, nextEnd)
+          if (s.startAnchor) s.startAnchor.side = side
         }
+        const startSide = s.startAnchor?.side || 'right'
+        nextStart = getAnchorPoint(tStart, startSide)
+        s.startOrientation = orientationForSide(startSide)
+      } else if (!tStart && tEnd) {
+        if (!s.endAnchor?.locked) {
+          const side = bestSideToward(tEnd, nextStart)
+          if (s.endAnchor) s.endAnchor.side = side
+        }
+        const endSide = s.endAnchor?.side || 'left'
+        nextEnd = getAnchorPoint(tEnd, endSide)
+        s.endOrientation = orientationForSide(endSide)
       }
 
       const newDx = nextEnd.x - nextStart.x
       const newDy = nextEnd.y - nextStart.y
+      const flippedX = Math.sign(newDx) !== Math.sign(oldDx)
+      const flippedY = Math.sign(newDy) !== Math.sign(oldDy)
 
       // Keep curved controlPoint relative to the line's midpoint so moving cards never warps the curve
       if (s.curvature === 'curved' && s.controlPoint) {
-        const newMid = { x: (nextStart.x + nextEnd.x) / 2, y: (nextStart.y + nextEnd.y) / 2 }
-        const shiftX = newMid.x - oldMid.x
-        const shiftY = newMid.y - oldMid.y
-        s.controlPoint = {
-          x: s.controlPoint.x + shiftX,
-          y: s.controlPoint.y + shiftY,
+        if (flippedX || flippedY) {
+          s.controlPoint = undefined
+        } else {
+          const newMid = { x: (nextStart.x + nextEnd.x) / 2, y: (nextStart.y + nextEnd.y) / 2 }
+          const shiftX = newMid.x - oldMid.x
+          const shiftY = newMid.y - oldMid.y
+          s.controlPoint = {
+            x: s.controlPoint.x + shiftX,
+            y: s.controlPoint.y + shiftY,
+          }
         }
       }
 
       // Update orthogonal midOffset: for same-side U-shapes, maintain the user-set distance from the boxes.
       // For general / S-shape connectors, scale proportionally with distance changes.
       if (s.curvature === 'orthogonal') {
-        const isSameSide = s.startAnchor?.side && s.startAnchor.side === s.endAnchor?.side
-        if (isSameSide) {
-          const side = s.startAnchor!.side!
-          if (side === 'top') {
-            if (s.midOffset !== undefined) {
-              const oldMidY = oldStart.y + s.midOffset
-              const userDist = Math.max(16, Math.min(oldStart.y, oldEnd.y) - oldMidY)
-              const newMidY = Math.min(nextStart.y, nextEnd.y) - userDist
-              s.midOffset = newMidY - nextStart.y
+        if (flippedX || flippedY) {
+          s.midOffset = undefined
+        } else {
+          const isSameSide = s.startAnchor?.side && s.startAnchor.side === s.endAnchor?.side
+          if (isSameSide) {
+            const side = s.startAnchor!.side!
+            if (side === 'top') {
+              if (s.midOffset !== undefined) {
+                const oldMidY = oldStart.y + s.midOffset
+                const userDist = Math.max(16, Math.min(oldStart.y, oldEnd.y) - oldMidY)
+                const newMidY = Math.min(nextStart.y, nextEnd.y) - userDist
+                s.midOffset = newMidY - nextStart.y
+              }
+            } else if (side === 'bottom') {
+              if (s.midOffset !== undefined) {
+                const oldMidY = oldStart.y + s.midOffset
+                const userDist = Math.max(16, oldMidY - Math.max(oldStart.y, oldEnd.y))
+                const newMidY = Math.max(nextStart.y, nextEnd.y) + userDist
+                s.midOffset = newMidY - nextStart.y
+              }
+            } else if (side === 'left') {
+              if (s.midOffset !== undefined) {
+                const oldMidX = oldStart.x + s.midOffset
+                const userDist = Math.max(16, Math.min(oldStart.x, oldEnd.x) - oldMidX)
+                const newMidX = Math.min(nextStart.x, nextEnd.x) - userDist
+                s.midOffset = newMidX - nextStart.x
+              }
+            } else if (side === 'right') {
+              if (s.midOffset !== undefined) {
+                const oldMidX = oldStart.x + s.midOffset
+                const userDist = Math.max(16, oldMidX - Math.max(oldStart.x, oldEnd.x))
+                const newMidX = Math.max(nextStart.x, nextEnd.x) + userDist
+                s.midOffset = newMidX - nextStart.x
+              }
             }
-          } else if (side === 'bottom') {
-            if (s.midOffset !== undefined) {
-              const oldMidY = oldStart.y + s.midOffset
-              const userDist = Math.max(16, oldMidY - Math.max(oldStart.y, oldEnd.y))
-              const newMidY = Math.max(nextStart.y, nextEnd.y) + userDist
-              s.midOffset = newMidY - nextStart.y
-            }
-          } else if (side === 'left') {
-            if (s.midOffset !== undefined) {
-              const oldMidX = oldStart.x + s.midOffset
-              const userDist = Math.max(16, Math.min(oldStart.x, oldEnd.x) - oldMidX)
-              const newMidX = Math.min(nextStart.x, nextEnd.x) - userDist
-              s.midOffset = newMidX - nextStart.x
-            }
-          } else if (side === 'right') {
-            if (s.midOffset !== undefined) {
-              const oldMidX = oldStart.x + s.midOffset
-              const userDist = Math.max(16, oldMidX - Math.max(oldStart.x, oldEnd.x))
-              const newMidX = Math.max(nextStart.x, nextEnd.x) + userDist
-              s.midOffset = newMidX - nextStart.x
-            }
-          }
-        } else if (s.midOffset !== undefined) {
-          const startOri = s.startOrientation ?? (Math.abs(newDx) >= Math.abs(newDy) ? 'horizontal' : 'vertical')
-          const endOri = s.endOrientation ?? startOri
-          if (startOri === 'horizontal' && endOri === 'horizontal') {
-            if (Math.abs(oldDx) > 10 && Math.sign(newDx) === Math.sign(oldDx)) {
-              const ratio = Math.max(0.15, Math.min(0.85, s.midOffset / oldDx))
-              s.midOffset = newDx * ratio
-            } else {
-              s.midOffset = undefined
-            }
-          } else if (startOri === 'vertical' && endOri === 'vertical') {
-            if (Math.abs(oldDy) > 10 && Math.sign(newDy) === Math.sign(oldDy)) {
-              const ratio = Math.max(0.15, Math.min(0.85, s.midOffset / oldDy))
-              s.midOffset = newDy * ratio
-            } else {
-              s.midOffset = undefined
+          } else if (s.midOffset !== undefined) {
+            const startOri = s.startOrientation ?? (Math.abs(newDx) >= Math.abs(newDy) ? 'horizontal' : 'vertical')
+            const endOri = s.endOrientation ?? startOri
+            if (startOri === 'horizontal' && endOri === 'horizontal') {
+              if (Math.abs(oldDx) > 10 && Math.sign(newDx) === Math.sign(oldDx)) {
+                const ratio = Math.max(0.15, Math.min(0.85, s.midOffset / oldDx))
+                s.midOffset = newDx * ratio
+              } else {
+                s.midOffset = undefined
+              }
+            } else if (startOri === 'vertical' && endOri === 'vertical') {
+              if (Math.abs(oldDy) > 10 && Math.sign(newDy) === Math.sign(oldDy)) {
+                const ratio = Math.max(0.15, Math.min(0.85, s.midOffset / oldDy))
+                s.midOffset = newDy * ratio
+              } else {
+                s.midOffset = undefined
+              }
             }
           }
         }

@@ -616,6 +616,27 @@ export function getConnectorGeometry(s: ShapeElement): ConnectorGeometry {
       const nY = uX
       const arcOffset = dist * 0.22
       ctrl = { x: (x1 + x2) / 2 + nX * arcOffset, y: (y1 + y2) / 2 + nY * arcOffset }
+
+      // Outer loop-around clearance fallback when an anchor side faces away from the other endpoint
+      if (s.startAnchor?.side === 'top' && dy > 0) {
+        ctrl.y = Math.min(ctrl.y, y1 - Math.max(36, Math.abs(dy) * 0.3))
+      } else if (s.startAnchor?.side === 'bottom' && dy < 0) {
+        ctrl.y = Math.max(ctrl.y, y1 + Math.max(36, Math.abs(dy) * 0.3))
+      } else if (s.startAnchor?.side === 'left' && dx > 0) {
+        ctrl.x = Math.min(ctrl.x, x1 - Math.max(36, Math.abs(dx) * 0.3))
+      } else if (s.startAnchor?.side === 'right' && dx < 0) {
+        ctrl.x = Math.max(ctrl.x, x1 + Math.max(36, Math.abs(dx) * 0.3))
+      }
+
+      if (s.endAnchor?.side === 'top' && dy < 0) {
+        ctrl.y = Math.min(ctrl.y, y2 - Math.max(36, Math.abs(dy) * 0.3))
+      } else if (s.endAnchor?.side === 'bottom' && dy > 0) {
+        ctrl.y = Math.max(ctrl.y, y2 + Math.max(36, Math.abs(dy) * 0.3))
+      } else if (s.endAnchor?.side === 'left' && dx < 0) {
+        ctrl.x = Math.min(ctrl.x, x2 - Math.max(36, Math.abs(dx) * 0.3))
+      } else if (s.endAnchor?.side === 'right' && dx > 0) {
+        ctrl.x = Math.max(ctrl.x, x2 + Math.max(36, Math.abs(dx) * 0.3))
+      }
     }
 
     const tEndDx = x2 - ctrl.x

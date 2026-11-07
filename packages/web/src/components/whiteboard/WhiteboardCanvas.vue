@@ -611,23 +611,16 @@ const activeDraftConnectorGeo = computed(() =>
                 />
               </template>
 
-              <template v-else>
-                <!-- Opaque surface base path so drawings and connectors beneath do not bleed through -->
-                <path
-                  :d="shapePath(entry.item)"
-                  fill="var(--color-surface, #ffffff)"
-                  stroke="none"
-                />
-                <path
-                  :d="shapePath(entry.item)"
-                  :stroke="entry.item.color"
-                  :stroke-width="entry.item.strokeWidth || 3"
-                  :stroke-dasharray="getStrokeDash(entry.item.strokeStyle)"
-                  :fill="getShapeFill(entry.item)"
-                  stroke-linecap="round"
-                  stroke-linejoin="round"
-                />
-              </template>
+              <path
+                v-else
+                :d="shapePath(entry.item)"
+                :stroke="entry.item.color"
+                :stroke-width="entry.item.strokeWidth || 3"
+                :stroke-dasharray="getStrokeDash(entry.item.strokeStyle)"
+                :fill="getShapeFill(entry.item)"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+              />
             </g>
           </svg>
 
