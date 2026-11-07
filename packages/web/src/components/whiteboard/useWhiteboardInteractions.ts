@@ -121,21 +121,24 @@ export function useWhiteboardInteractions(opts: {
     reconcileConnectorRelationAfterResize,
   } = selectionState
 
-  // Sticky Text Editing -----------------------------------------------------
+  // Sticky & Shape Text Editing ---------------------------------------------
   let editStartText = ''
 
   function startEditing(id: string) {
     editingId.value = id
-    nextTick(() => document.getElementById(`wb-sticky-${id}`)?.focus())
+    nextTick(() => {
+      const el = document.getElementById(`wb-sticky-${id}`) ?? document.getElementById(`wb-shape-text-${id}`)
+      el?.focus()
+    })
   }
 
-  function onStickyFocus(sticky: StickyElement) {
-    editStartText = sticky.text
+  function onStickyFocus(item: { text?: string }) {
+    editStartText = item.text ?? ''
   }
 
-  function onStickyBlur(sticky: StickyElement) {
+  function onStickyBlur(item: { text?: string }) {
     editingId.value = null
-    if (sticky.text !== editStartText) pushHistory()
+    if ((item.text ?? '') !== editStartText) pushHistory()
   }
 
   // Erasing -----------------------------------------------------------------
@@ -528,7 +531,8 @@ export function useWhiteboardInteractions(opts: {
     lastTapTime = now
     if (isDouble && key) {
       const { kind, id } = parseKey(key)
-      if (kind === 'sticky') {
+      const is2DShape = kind === 'shape' && !isLine(findItem(key)?.item as ShapeElement)
+      if (kind === 'sticky' || is2DShape) {
         selected.value = [key]
         lastTapKey = undefined
         startEditing(id)

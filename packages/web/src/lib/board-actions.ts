@@ -214,7 +214,7 @@ export function autoLayoutWhiteboardData(
   const elements = whiteboardDataToElements(next)
   const patches = layoutBoardElements(elements, direction)
 
-  const boxById = new Map<string, { x: number; y: number; w: number; h: number }>()
+  const boxById = new Map<string, { x: number; y: number; w: number; h: number; shape?: string }>()
 
   for (const card of next.cards) {
     const p = patches[card.id]
@@ -248,6 +248,7 @@ export function autoLayoutWhiteboardData(
       y: Math.min(shape.y, shape.y + shape.height),
       w: Math.abs(shape.width),
       h: Math.abs(shape.height),
+      shape: shape.type,
     })
   }
 
@@ -429,7 +430,40 @@ export function exportWhiteboardToSvg(data: WhiteboardData, padding = 48): strin
     )
   }
 
-  // 2. 2D Shapes
+  // 2. Connectors (1D lines & arrows - rendered underneath shapes, stickies, and cards)
+  const labelOverlayParts: string[] = []
+  for (const s of data.shapes) {
+    if (s.type !== 'line' && s.type !== 'arrow') continue
+    const geom = getConnectorGeometry(s)
+    const stroke = s.color || '#64748b'
+    const sw = s.strokeWidth ?? 2.5
+    const dash = s.strokeStyle === 'dashed' ? ' stroke-dasharray="8 6"' : s.strokeStyle === 'dotted' ? ' stroke-dasharray="3 5"' : ''
+
+    parts.push(`  <g>`)
+    parts.push(
+      `    <path d="${geom.shaftPath}" fill="none" stroke="${stroke}" stroke-width="${sw}" stroke-linecap="round" stroke-linejoin="round"${dash} />`
+    )
+    if (geom.startHead) {
+      parts.push(`    <path d="${geom.startHead}" fill="${stroke}" />`)
+    }
+    if (geom.endHead) {
+      parts.push(`    <path d="${geom.endHead}" fill="${stroke}" />`)
+    }
+    parts.push(`  </g>`)
+
+    const labelText = s.text?.trim() || resolveRelationLabel(s, data.cards)
+    if (labelText) {
+      const tw = Math.max(40, labelText.length * 7 + 16)
+      labelOverlayParts.push(
+        `  <g>`,
+        `    <rect x="${geom.labelPoint.x - tw / 2}" y="${geom.labelPoint.y - 11}" width="${tw}" height="22" rx="6" fill="#ffffff" stroke="${stroke}" stroke-width="1.2" />`,
+        `    <text x="${geom.labelPoint.x}" y="${geom.labelPoint.y + 4}" text-anchor="middle" font-size="11" font-weight="600" fill="#1e293b">${escapeXml(labelText)}</text>`,
+        `  </g>`
+      )
+    }
+  }
+
+  // 3. 2D Shapes
   for (const s of data.shapes) {
     if (s.type === 'line' || s.type === 'arrow') continue
     const b = normBox(s)
@@ -473,7 +507,7 @@ export function exportWhiteboardToSvg(data: WhiteboardData, padding = 48): strin
     parts.push(`  </g>`)
   }
 
-  // 3. Sticky Notes
+  // 4. Sticky Notes
   for (const st of data.stickies) {
     const pal = stickyStyle(st.color)
     parts.push(`  <g>`)
@@ -491,7 +525,7 @@ export function exportWhiteboardToSvg(data: WhiteboardData, padding = 48): strin
     parts.push(`  </g>`)
   }
 
-  // 4. Vasta Object Cards
+  // 5. Vasta Object Cards
   for (const c of data.cards) {
     const typeLabel = c.typeName || 'Page'
     const title = c.title || 'Untitled'
@@ -506,35 +540,7 @@ export function exportWhiteboardToSvg(data: WhiteboardData, padding = 48): strin
     )
   }
 
-  // 5. Connectors (1D lines & arrows)
-  for (const s of data.shapes) {
-    if (s.type !== 'line' && s.type !== 'arrow') continue
-    const geom = getConnectorGeometry(s)
-    const stroke = s.color || '#64748b'
-    const sw = s.strokeWidth ?? 2.5
-    const dash = s.strokeStyle === 'dashed' ? ' stroke-dasharray="8 6"' : s.strokeStyle === 'dotted' ? ' stroke-dasharray="3 5"' : ''
-
-    parts.push(`  <g>`)
-    parts.push(
-      `    <path d="${geom.shaftPath}" fill="none" stroke="${stroke}" stroke-width="${sw}" stroke-linecap="round" stroke-linejoin="round"${dash} />`
-    )
-    if (geom.startHead) {
-      parts.push(`    <path d="${geom.startHead}" fill="${stroke}" />`)
-    }
-    if (geom.endHead) {
-      parts.push(`    <path d="${geom.endHead}" fill="${stroke}" />`)
-    }
-
-    const labelText = s.text?.trim() || resolveRelationLabel(s, data.cards)
-    if (labelText) {
-      const tw = Math.max(40, labelText.length * 7 + 16)
-      parts.push(
-        `    <rect x="${geom.labelPoint.x - tw / 2}" y="${geom.labelPoint.y - 11}" width="${tw}" height="22" rx="6" fill="#ffffff" stroke="${stroke}" stroke-width="1.2" />`,
-        `    <text x="${geom.labelPoint.x}" y="${geom.labelPoint.y + 4}" text-anchor="middle" font-size="11" font-weight="600" fill="#1e293b">${escapeXml(labelText)}</text>`
-      )
-    }
-    parts.push(`  </g>`)
-  }
+  parts.push(...labelOverlayParts)
 
   // 6. Freehand Ink Strokes
   for (const stroke of data.strokes) {

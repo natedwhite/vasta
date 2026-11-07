@@ -6,7 +6,6 @@ import { NodeViewContent, NodeViewWrapper, nodeViewProps } from '@tiptap/vue-3'
 import { parseMermaidFlowchart } from '@vasta/core'
 import type { Mounted } from 'pele/lazy'
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import { boardFromMermaid } from '../lib/board-actions.ts'
 import { MERMAID, mountDiagram } from '../lib/mermaid.ts'
 import { lastError } from '../lib/state.ts'
 import { router } from '../router.ts'
@@ -25,6 +24,7 @@ const canTurnIntoBoard = computed(() => {
 
 async function turnIntoBoard() {
   try {
+    const { boardFromMermaid } = await import('../lib/board-actions.ts')
     const board = await boardFromMermaid(text.value)
     await router.push(`/o/${board.id}`)
   } catch (err) {

@@ -24,6 +24,7 @@ GitHub release page.
 
 ### Changed
 
+- **2D shape inline text editing, connector labels, and whiteboard render/bundle optimizations.** 2D shapes (`rectangle`, `ellipse`, `diamond`, `triangle`) now display centered labels on the interactive canvas and thumbnails with double-click inline editing, and non-relation connectors render label pills across canvas, previews, and exports. Precomputed connector geometry and stroke paths per reactive update, lazy-loaded whiteboard views (`ObjectPage.js` bundle reduced by 50%), and unified z-ordering across interactive canvas, thumbnails, and SVG/PNG exports.
 - **Triangle and center shape snapping points.** Triangle shapes now snap to the exact midpoints of their slanted left and right edges, the bottom edge, and the top apex, rather than the rectangular bounding box. All shapes, cards, and sticky notes also feature a center snap port (`center`).
 - **Connectors default to underneath everything else.** Connectors and arrows now default to the lowest z-index layer on the whiteboard, cleanly passing underneath cards, sticky notes, and 2D shapes rather than overlapping them.
 - **Card dimension estimation and diagram spacing in auto-layout.** `layeredLayout` and `graphToElements` now account for the actual rendered height of Vasta object cards (`CARD_SIZE`: `260×160` default, `220×90` compact, `300×220` embed) with increased cross-axis margins (`GAP.y`: 84px), eliminating card overlaps in diagram subgraphs.

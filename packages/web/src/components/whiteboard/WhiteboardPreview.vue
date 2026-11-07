@@ -2,7 +2,7 @@
 // Read-only miniature of a whiteboard, shown where one is embedded in a page or gallery.
 import { computed, onBeforeUnmount, onMounted, ref, useAttrs, watch } from 'vue'
 import { useRouter } from 'vue-router'
-import type { Id, ObjectRecord, ObjectSummary } from '@vasta/core'
+import { parseWhiteboardProp, type Id, type ObjectRecord, type ObjectSummary } from '@vasta/core'
 import AppIcon from '../AppIcon.vue'
 import { api } from '../../lib/api.ts'
 import { onChange } from '../../lib/events.ts'
@@ -65,21 +65,7 @@ function onWindowPointerDown(e: PointerEvent) {
 const targetObject = computed(() => (props.object as ObjectRecord) || fetchedObject.value)
 
 const data = computed<WhiteboardData | null>(() => {
-  const raw = targetObject.value?.props?.whiteboardData as unknown
-  try {
-    const str =
-      typeof raw === 'string'
-        ? raw
-        : raw && typeof raw === 'object' && 'value' in raw && typeof (raw as { value: unknown }).value === 'string'
-          ? (raw as { value: string }).value
-          : null
-    const parsed = str ? JSON.parse(str) : raw
-    return parsed && typeof parsed === 'object' && ('strokes' in parsed || 'shapes' in parsed || 'cards' in parsed || 'stickies' in parsed)
-      ? (parsed as WhiteboardData)
-      : null
-  } catch {
-    return null
-  }
+  return (parseWhiteboardProp(targetObject.value ?? undefined) as WhiteboardData | undefined) ?? null
 })
 
 watch(
@@ -130,10 +116,23 @@ const activeSelectValue = computed(() => {
 })
 
 const renderedShapes = computed(() =>
-  (data.value?.shapes ?? []).map((s) => ({
-    shape: s,
-    line: isLine(s),
-    connector: isLine(s) ? getConnectorGeometry(s) : null,
+  (data.value?.shapes ?? [])
+    .map((s) => {
+      const line = isLine(s)
+      return {
+        shape: s,
+        line,
+        zIndex: s.zIndex ?? (line ? 0 : 10),
+        connector: line ? getConnectorGeometry(s) : null,
+      }
+    })
+    .sort((a, b) => a.zIndex - b.zIndex),
+)
+
+const renderedStickies = computed(() =>
+  (data.value?.stickies ?? []).map((s) => ({
+    sticky: s,
+    palette: stickyStyle(s.color),
   })),
 )
 
@@ -149,16 +148,25 @@ const box = computed(() => {
     }
   }
   const d = data.value
-  const xs: number[] = []
-  const ys: number[] = []
-  for (const s of d?.strokes ?? []) for (const p of s.points) { xs.push(p.x); ys.push(p.y) }
-  for (const s of d?.shapes ?? []) { xs.push(s.x, s.x + s.width); ys.push(s.y, s.y + s.height) }
-  for (const c of [...(d?.cards ?? []), ...(d?.stickies ?? [])]) { xs.push(c.x, c.x + c.width); ys.push(c.y, c.y + c.height) }
-  if (!xs.length) return { x: 0, y: 0, w: 600, h: 300, empty: true }
+  let minX = Infinity
+  let minY = Infinity
+  let maxX = -Infinity
+  let maxY = -Infinity
+  const addPt = (x: number, y: number) => {
+    if (x < minX) minX = x
+    if (y < minY) minY = y
+    if (x > maxX) maxX = x
+    if (y > maxY) maxY = y
+  }
+  for (const s of d?.strokes ?? []) for (const p of s.points) addPt(p.x, p.y)
+  for (const s of d?.shapes ?? []) { addPt(s.x, s.y); addPt(s.x + s.width, s.y + s.height) }
+  for (const c of d?.cards ?? []) { addPt(c.x, c.y); addPt(c.x + c.width, c.y + c.height) }
+  for (const st of d?.stickies ?? []) { addPt(st.x, st.y); addPt(st.x + st.width, st.y + st.height) }
+  if (!Number.isFinite(minX)) return { x: 0, y: 0, w: 600, h: 300, empty: true }
   const pad = 30
-  const x = Math.min(...xs) - pad
-  const y = Math.min(...ys) - pad
-  return { x, y, w: Math.max(...xs) + pad - x, h: Math.max(...ys) + pad - y, empty: false }
+  const x = minX - pad
+  const y = minY - pad
+  return { x, y, w: maxX + pad - x, h: maxY + pad - y, empty: false }
 })
 
 function onSceneSelect(val: string) {
@@ -240,23 +248,42 @@ function open() {
             :stroke="s.color"
             stroke-width="1"
           />
+          <text
+            v-if="s.text?.trim()"
+            :x="connector.labelPoint.x"
+            :y="connector.labelPoint.y - 6"
+            text-anchor="middle"
+            font-size="11"
+            font-weight="600"
+            fill="currentColor"
+          >{{ s.text }}</text>
         </template>
-        <path
-          v-else
-          :d="shapePath(s)"
-          :stroke="s.color"
-          :stroke-width="s.strokeWidth || 2.5"
-          :stroke-dasharray="getStrokeDash(s.strokeStyle)"
-          :fill="getShapeFill(s)"
-          stroke-linecap="round"
-          stroke-linejoin="round"
-        />
+        <template v-else>
+          <path
+            :d="shapePath(s)"
+            :stroke="s.color"
+            :stroke-width="s.strokeWidth || 2.5"
+            :stroke-dasharray="getStrokeDash(s.strokeStyle)"
+            :fill="getShapeFill(s)"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          />
+          <text
+            v-if="s.text?.trim()"
+            :x="s.x + s.width / 2"
+            :y="s.y + s.height / 2 + 5"
+            text-anchor="middle"
+            font-size="13"
+            font-weight="600"
+            :fill="s.fill === 'solid' && !s.fillColor ? '#ffffff' : 'currentColor'"
+          >{{ s.text }}</text>
+        </template>
       </g>
       <!-- Stickies -->
-      <g v-for="s in data?.stickies ?? []" :key="s.id">
-        <rect :x="s.x" :y="s.y" :width="s.width" :height="s.height" rx="10" :fill="stickyStyle(s.color).bg" :stroke="stickyStyle(s.color).border" />
+      <g v-for="{ sticky: s, palette } in renderedStickies" :key="s.id">
+        <rect :x="s.x" :y="s.y" :width="s.width" :height="s.height" rx="10" :fill="palette.bg" :stroke="palette.border" />
         <foreignObject :x="s.x + 8" :y="s.y + 8" :width="s.width - 16" :height="s.height - 16">
-          <div xmlns="http://www.w3.org/1999/xhtml" :style="{ fontSize: '13px', color: stickyStyle(s.color).text, whiteSpace: 'pre-wrap', overflow: 'hidden', height: '100%' }">{{ s.text }}</div>
+          <div xmlns="http://www.w3.org/1999/xhtml" :style="{ fontSize: '13px', color: s.textColor || palette.text, whiteSpace: 'pre-wrap', overflow: 'hidden', height: '100%' }">{{ s.text }}</div>
         </foreignObject>
       </g>
       <!-- Cards -->

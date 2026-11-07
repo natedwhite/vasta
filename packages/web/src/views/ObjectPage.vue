@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, onMounted, provide, ref, shallowRef, watch } from 'vue'
+import { computed, defineAsyncComponent, nextTick, onBeforeUnmount, onMounted, provide, ref, shallowRef, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ARTICLE_PROPERTY_ID, HABIT_REMIND_PROPERTY_ID, afterSave, canonicalJson, formulaFromNames, formulaToNames, habitRemindAt, type ColorName, type DateValue, type Doc, type Icon, type ObjectRecord, type ObjectSummary, type PropertyDef, type PropertyValue, type QueryDef, type SelectOption } from '@vasta/core'
 import AppIcon from '../components/AppIcon.vue'
@@ -45,7 +45,7 @@ import { openMenuAt, promptDialog, type MenuItem } from '../lib/overlays.ts'
 import { clearOtherDefaults, deleteTemplate, loadTemplates, previewTemplate, rememberTemplate, saveAsTemplate, templateFill, templatesOf } from '../lib/templates.ts'
 import DocPreview from '../components/DocPreview.ts'
 import ModalDialog from '../components/ModalDialog.vue'
-import WhiteboardPageView from '../components/whiteboard/WhiteboardPageView.vue'
+const WhiteboardPageView = defineAsyncComponent(() => import('../components/whiteboard/WhiteboardPageView.vue'))
 import { writeContent, type JsonDoc } from '@vasta/editor-schema/yjs'
 
 /** `embedded`: only the text and what links here, inside another page (the calendar's day). */

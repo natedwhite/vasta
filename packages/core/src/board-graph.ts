@@ -26,11 +26,18 @@ const GAP = { x: 96, y: 84 }
 
 /** The box around placed elements (strokes drawn on another element left out). */
 export function boardBounds(elements: BoardElement[]) {
-  const placed = elements.filter((e): e is PlacedElement => isPlaced(e) && !isAttached(e))
-  if (!placed.length) return undefined
-  const left = Math.min(...placed.map((e) => e.x))
-  const top = Math.min(...placed.map((e) => e.y))
-  return { x: left, y: top, right: Math.max(...placed.map((e) => e.x + e.w)), bottom: Math.max(...placed.map((e) => e.y + e.h)) }
+  let left = Infinity
+  let top = Infinity
+  let right = -Infinity
+  let bottom = -Infinity
+  for (const e of elements) {
+    if (!isPlaced(e) || isAttached(e)) continue
+    if (e.x < left) left = e.x
+    if (e.y < top) top = e.y
+    if (e.x + e.w > right) right = e.x + e.w
+    if (e.y + e.h > bottom) bottom = e.y + e.h
+  }
+  return Number.isFinite(left) ? { x: left, y: top, right, bottom } : undefined
 }
 
 /** Where new content goes: to the right of what the board has, lined up with its top (the origin on an empty board). */
@@ -534,10 +541,12 @@ export function graphToElements(
   makeId: () => Id,
   objectFor: (label: string) => Id | undefined = () => undefined
 ): (NewBoardElement & { id: Id })[] {
+  const resolvedObjects = new Map<string, Id | undefined>()
   const sizeMap = new Map<string, { w: number; h: number }>()
   for (const n of graph.nodes) {
-    const isCard = !!objectFor(n.label)
-    sizeMap.set(n.ref, isCard ? CARD_SIZE : NODE_SIZE)
+    const objId = objectFor(n.label)
+    resolvedObjects.set(n.ref, objId)
+    sizeMap.set(n.ref, objId ? CARD_SIZE : NODE_SIZE)
   }
   const positions = layeredLayout(
     graph.nodes.map((n) => n.ref),
@@ -553,7 +562,7 @@ export function graphToElements(
     const sz = sizeMap.get(n.ref)!
     const box = { x: at.x + p.x, y: at.y + p.y, w: sz.w, h: sz.h }
     nodeBoxes.set(n.ref, box)
-    const objectId = objectFor(n.label)
+    const objectId = resolvedObjects.get(n.ref)
     nodeElements.push(
       objectId ? { id: ids.get(n.ref)!, kind: 'card', objectId, ...box } : { id: ids.get(n.ref)!, kind: 'shape', shape: n.shape, text: n.label, ...box }
     )
@@ -744,55 +753,8 @@ export function boardToSvg(
     )
   }
 
-  // 2. Shapes, Stickies, Text, Cards
-  for (const e of elements) {
-    if (!isPlaced(e) || e.kind === 'frame' || e.kind === 'stroke') continue
-    if (e.kind === 'card') {
-      const title = options.objectTitle?.(e.objectId) ?? e.objectId
-      const typeName = options.objectTypeName?.(e.objectId) ?? 'Object'
-      parts.push(
-        `  <g>`,
-        `    <rect x="${e.x}" y="${e.y}" width="${e.w}" height="${e.h}" rx="12" fill="#ffffff" stroke="#cbd5e1" stroke-width="1.5" />`,
-        `    <rect x="${e.x + 12}" y="${e.y + 12}" width="${Math.min(e.w - 24, Math.max(44, typeName.length * 7 + 16))}" height="20" rx="6" fill="#eff6ff" />`,
-        `    <text x="${e.x + 20}" y="${e.y + 26}" font-size="10" font-weight="600" fill="#2563eb">${escapeXml(typeName)}</text>`,
-        `    <text x="${e.x + 14}" y="${e.y + 54}" font-size="14" font-weight="600" fill="#0f172a">${escapeXml(title)}</text>`,
-        `  </g>`
-      )
-    } else if (e.kind === 'sticky') {
-      const hex = e.color ? BOARD_COLOR_HEX[e.color] : '#f59e0b'
-      parts.push(
-        `  <g>`,
-        `    <rect x="${e.x}" y="${e.y}" width="${e.w}" height="${e.h}" rx="10" fill="${hex}22" stroke="${hex}" stroke-width="1.5" />`,
-        `    <text x="${e.x + 16}" y="${e.y + 30}" font-size="13" font-weight="500" fill="#1e293b">${escapeXml(e.text)}</text>`,
-        `  </g>`
-      )
-    } else if (e.kind === 'text') {
-      const hex = e.color ? BOARD_COLOR_HEX[e.color] : '#0f172a'
-      parts.push(`  <text x="${e.x + 4}" y="${e.y + Math.min(24, e.h / 2 + 5)}" font-size="15" font-weight="500" fill="${hex}">${escapeXml(e.text)}</text>`)
-    } else if (e.kind === 'shape') {
-      const hex = e.color ? BOARD_COLOR_HEX[e.color] : '#3b82f6'
-      const cx = e.x + e.w / 2
-      const cy = e.y + e.h / 2
-      let geom = `<rect x="${e.x}" y="${e.y}" width="${e.w}" height="${e.h}" rx="10" fill="${hex}18" stroke="${hex}" stroke-width="2" />`
-      if (e.shape === 'ellipse') {
-        geom = `<ellipse cx="${cx}" cy="${cy}" rx="${e.w / 2}" ry="${e.h / 2}" fill="${hex}18" stroke="${hex}" stroke-width="2" />`
-      } else if (e.shape === 'diamond') {
-        geom = `<polygon points="${cx},${e.y} ${e.x + e.w},${cy} ${cx},${e.y + e.h} ${e.x},${cy}" fill="${hex}18" stroke="${hex}" stroke-width="2" stroke-linejoin="round" />`
-      } else if (e.shape === 'triangle') {
-        geom = `<polygon points="${cx},${e.y} ${e.x + e.w},${e.y + e.h} ${e.x},${e.y + e.h}" fill="${hex}18" stroke="${hex}" stroke-width="2" stroke-linejoin="round" />`
-      }
-      parts.push(
-        `  <g>`,
-        `    ${geom}`,
-        ...(e.text
-          ? [`    <text x="${cx}" y="${cy + 5}" text-anchor="middle" font-size="13" font-weight="600" fill="#0f172a">${escapeXml(e.text)}</text>`]
-          : []),
-        `  </g>`
-      )
-    }
-  }
-
-  // 3. Arrows
+  // 2. Arrows (underneath shapes, stickies, and cards)
+  const labelOverlayParts: string[] = []
   for (const e of elements) {
     if (e.kind !== 'arrow') continue
     const fromEl = placedById.get(e.from)
@@ -850,16 +812,69 @@ export function boardToSvg(
     if (e.heads !== 'none') {
       parts.push(`    <polygon points="${endPt.x},${endPt.y} ${p1x.toFixed(1)},${p1y.toFixed(1)} ${p2x.toFixed(1)},${p2y.toFixed(1)}" fill="${stroke}" />`)
     }
+    parts.push(`  </g>`)
+
     const labelText = e.label || e.relation
     if (labelText) {
       const tw = Math.max(36, labelText.length * 7 + 14)
-      parts.push(
+      labelOverlayParts.push(
+        `  <g>`,
         `    <rect x="${labelPt.x - tw / 2}" y="${labelPt.y - 11}" width="${tw}" height="22" rx="6" fill="#ffffff" stroke="${stroke}" stroke-width="1" />`,
-        `    <text x="${labelPt.x}" y="${labelPt.y + 4}" text-anchor="middle" font-size="11" font-weight="600" fill="#334155">${escapeXml(labelText)}</text>`
+        `    <text x="${labelPt.x}" y="${labelPt.y + 4}" text-anchor="middle" font-size="11" font-weight="600" fill="#334155">${escapeXml(labelText)}</text>`,
+        `  </g>`
       )
     }
-    parts.push(`  </g>`)
   }
+
+  // 3. Shapes, Stickies, Text, Cards
+  for (const e of elements) {
+    if (!isPlaced(e) || e.kind === 'frame' || e.kind === 'stroke') continue
+    if (e.kind === 'card') {
+      const title = options.objectTitle?.(e.objectId) ?? e.objectId
+      const typeName = options.objectTypeName?.(e.objectId) ?? 'Object'
+      parts.push(
+        `  <g>`,
+        `    <rect x="${e.x}" y="${e.y}" width="${e.w}" height="${e.h}" rx="12" fill="#ffffff" stroke="#cbd5e1" stroke-width="1.5" />`,
+        `    <rect x="${e.x + 12}" y="${e.y + 12}" width="${Math.min(e.w - 24, Math.max(44, typeName.length * 7 + 16))}" height="20" rx="6" fill="#eff6ff" />`,
+        `    <text x="${e.x + 20}" y="${e.y + 26}" font-size="10" font-weight="600" fill="#2563eb">${escapeXml(typeName)}</text>`,
+        `    <text x="${e.x + 14}" y="${e.y + 54}" font-size="14" font-weight="600" fill="#0f172a">${escapeXml(title)}</text>`,
+        `  </g>`
+      )
+    } else if (e.kind === 'sticky') {
+      const hex = e.color ? BOARD_COLOR_HEX[e.color] : '#f59e0b'
+      parts.push(
+        `  <g>`,
+        `    <rect x="${e.x}" y="${e.y}" width="${e.w}" height="${e.h}" rx="10" fill="${hex}22" stroke="${hex}" stroke-width="1.5" />`,
+        `    <text x="${e.x + 16}" y="${e.y + 30}" font-size="13" font-weight="500" fill="#1e293b">${escapeXml(e.text)}</text>`,
+        `  </g>`
+      )
+    } else if (e.kind === 'text') {
+      const hex = e.color ? BOARD_COLOR_HEX[e.color] : '#0f172a'
+      parts.push(`  <text x="${e.x + 4}" y="${e.y + Math.min(24, e.h / 2 + 5)}" font-size="15" font-weight="500" fill="${hex}">${escapeXml(e.text)}</text>`)
+    } else if (e.kind === 'shape') {
+      const hex = e.color ? BOARD_COLOR_HEX[e.color] : '#3b82f6'
+      const cx = e.x + e.w / 2
+      const cy = e.y + e.h / 2
+      let geom = `<rect x="${e.x}" y="${e.y}" width="${e.w}" height="${e.h}" rx="10" fill="${hex}18" stroke="${hex}" stroke-width="2" />`
+      if (e.shape === 'ellipse') {
+        geom = `<ellipse cx="${cx}" cy="${cy}" rx="${e.w / 2}" ry="${e.h / 2}" fill="${hex}18" stroke="${hex}" stroke-width="2" />`
+      } else if (e.shape === 'diamond') {
+        geom = `<polygon points="${cx},${e.y} ${e.x + e.w},${cy} ${cx},${e.y + e.h} ${e.x},${cy}" fill="${hex}18" stroke="${hex}" stroke-width="2" stroke-linejoin="round" />`
+      } else if (e.shape === 'triangle') {
+        geom = `<polygon points="${cx},${e.y} ${e.x + e.w},${e.y + e.h} ${e.x},${e.y + e.h}" fill="${hex}18" stroke="${hex}" stroke-width="2" stroke-linejoin="round" />`
+      }
+      parts.push(
+        `  <g>`,
+        `    ${geom}`,
+        ...(e.text
+          ? [`    <text x="${cx}" y="${cy + 5}" text-anchor="middle" font-size="13" font-weight="600" fill="#0f172a">${escapeXml(e.text)}</text>`]
+          : []),
+        `  </g>`
+      )
+    }
+  }
+
+  parts.push(...labelOverlayParts)
 
   parts.push(`</svg>`)
   return parts.join('\n')

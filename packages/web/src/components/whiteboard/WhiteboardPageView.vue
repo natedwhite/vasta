@@ -4,6 +4,7 @@ import { useRouter } from 'vue-router'
 import {
   formulaFromNames,
   formulaToNames,
+  parseWhiteboardProp,
   type ObjectRecord,
   type ObjectSummary,
   type ObjectType,
@@ -332,22 +333,17 @@ async function onImportCanvasFile(e: Event) {
 
 // Initial whiteboard data loaded from object.props.whiteboardData (supports PropertyValue object or legacy string)
 const initialData = computed<Partial<WhiteboardData>>(() => {
-  try {
-    const raw = props.object.props?.whiteboardData as unknown
-    const str =
-      typeof raw === 'string'
-        ? raw
-        : raw && typeof raw === 'object' && 'value' in raw && typeof (raw as { value: unknown }).value === 'string'
-          ? (raw as { value: string }).value
-          : null
-    if (str) return JSON.parse(str)
-    if (raw && typeof raw === 'object' && ('strokes' in raw || 'shapes' in raw || 'cards' in raw || 'stickies' in raw)) {
-      return raw as Partial<WhiteboardData>
+  return (
+    (parseWhiteboardProp(props.object) as Partial<WhiteboardData> | undefined) ?? {
+      version: 1,
+      pan: { x: 0, y: 0 },
+      zoom: 1,
+      strokes: [],
+      shapes: [],
+      cards: [],
+      stickies: [],
     }
-  } catch (e) {
-    console.warn('Failed to parse whiteboardData', e)
-  }
-  return { version: 1, pan: { x: 0, y: 0 }, zoom: 1, strokes: [], shapes: [], cards: [], stickies: [] }
+  )
 })
 
 /** The copy last loaded or saved: what the next save is made from and compared with. */

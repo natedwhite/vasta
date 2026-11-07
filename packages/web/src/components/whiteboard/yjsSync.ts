@@ -13,9 +13,6 @@ import type {
 
 export interface YjsWhiteboardBridge {
   syncLocalToYjs: (data: WhiteboardData) => void
-  setElement: (key: string, value: unknown) => void
-  deleteElement: (key: string) => void
-  setMeta: (key: string, value: unknown) => void
   destroy: () => void
 }
 
@@ -150,24 +147,8 @@ export function bindWhiteboardToYDoc(
         if (data.defaultSceneId !== undefined) setIfChanged(meta, 'defaultSceneId', data.defaultSceneId)
         if (!meta.has('pan') && data.pan) setIfChanged(meta, 'pan', data.pan)
         if (!meta.has('zoom') && data.zoom) setIfChanged(meta, 'zoom', data.zoom)
-        meta.set('updatedByUi', true)
+        if (meta.get('updatedByUi') !== true) meta.set('updatedByUi', true)
       })
-    },
-    setElement: (key: string, value: unknown) => {
-      if (isApplyingRemote) return
-      setIfChanged(elements, key, value)
-      meta.set('updatedByUi', true)
-    },
-    deleteElement: (key: string) => {
-      if (isApplyingRemote) return
-      serializedCache.delete(key)
-      elements.delete(key)
-      meta.set('updatedByUi', true)
-    },
-    setMeta: (key: string, value: unknown) => {
-      if (isApplyingRemote) return
-      setIfChanged(meta, key, value)
-      meta.set('updatedByUi', true)
     },
     destroy: () => {
       elements.unobserve(observer)

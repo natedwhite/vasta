@@ -15,6 +15,7 @@ import {
   rotatePoint,
   shapeHit,
   stickyStyle,
+  type ConnectorGeometry,
   type SnapTarget,
 } from './shapes.ts'
 import type {
@@ -44,10 +45,24 @@ export interface Box {
 export type Kind = 'stroke' | 'shape' | 'card' | 'sticky'
 
 export type CanvasItem =
-  | { key: string; kind: 'stroke'; zIndex: number; item: InkStroke }
-  | { key: string; kind: 'shape'; zIndex: number; item: ShapeElement }
+  | { key: string; kind: 'stroke'; zIndex: number; item: InkStroke; pathD: string; center?: Point }
+  | {
+      key: string
+      kind: 'shape'
+      zIndex: number
+      item: ShapeElement
+      isLine: boolean
+      connectorGeo?: ConnectorGeometry
+      relationInfo?: ConnectorRelationBadgeInfo | null
+    }
   | { key: string; kind: 'card'; zIndex: number; item: ObjectCardElement }
-  | { key: string; kind: 'sticky'; zIndex: number; item: StickyElement }
+  | {
+      key: string
+      kind: 'sticky'
+      zIndex: number
+      item: StickyElement
+      palette: { bg: string; border: string; text: string }
+    }
 
 export type ResizeHandleId = 'se' | 'nw' | 'ne' | 'sw' | 'top' | 'br' | 'bl' | 'start' | 'end' | 'mid'
 
@@ -475,12 +490,49 @@ export function useWhiteboardSelection(opts: UseWhiteboardSelectionOptions) {
 
   const allCanvasItems = computed<CanvasItem[]>(() => {
     const raw = getAllRawItems()
-    const list: CanvasItem[] = raw.map((entry) => ({
-      key: entry.key,
-      kind: entry.kind,
-      zIndex: entry.item.zIndex ?? (entry.kind === 'shape' && isLine(entry.item as ShapeElement) ? 0 : 10),
-      item: entry.item,
-    })) as CanvasItem[]
+    const list: CanvasItem[] = raw.map((entry): CanvasItem => {
+      if (entry.kind === 'stroke') {
+        const s = entry.item as InkStroke
+        return {
+          key: entry.key,
+          kind: 'stroke',
+          zIndex: s.zIndex ?? 10,
+          item: s,
+          pathD: s.points.map((p, i) => `${i ? 'L' : 'M'} ${p.x} ${p.y}`).join(' '),
+          center: s.rotation ? getStrokeCenter(s) : undefined,
+        }
+      }
+      if (entry.kind === 'shape') {
+        const s = entry.item as ShapeElement
+        const line = isLine(s)
+        return {
+          key: entry.key,
+          kind: 'shape',
+          zIndex: s.zIndex ?? (line ? 0 : 10),
+          item: s,
+          isLine: line,
+          connectorGeo: line ? getConnectorGeometry(s) : undefined,
+          relationInfo: line ? getConnectorRelationInfo(s) : null,
+        }
+      }
+      if (entry.kind === 'sticky') {
+        const st = entry.item as StickyElement
+        return {
+          key: entry.key,
+          kind: 'sticky',
+          zIndex: st.zIndex ?? 10,
+          item: st,
+          palette: stickyStyle(st.color),
+        }
+      }
+      const c = entry.item as ObjectCardElement
+      return {
+        key: entry.key,
+        kind: 'card',
+        zIndex: c.zIndex ?? 10,
+        item: c,
+      }
+    })
     return list.sort((a, b) => a.zIndex - b.zIndex)
   })
 
@@ -488,11 +540,19 @@ export function useWhiteboardSelection(opts: UseWhiteboardSelectionOptions) {
     const boxes = selected.value.map(boundsOfKey).filter((b): b is Box => !!b)
     if (!boxes.length) return null
     const pad = 5 / zoom.value
-    const x = Math.min(...boxes.map((b) => b.x)) - pad
-    const y = Math.min(...boxes.map((b) => b.y)) - pad
-    const r = Math.max(...boxes.map((b) => b.x + b.w)) + pad
-    const b = Math.max(...boxes.map((b2) => b2.y + b2.h)) + pad
-    return { x, y, w: r - x, h: b - y }
+    let minX = Infinity
+    let minY = Infinity
+    let maxX = -Infinity
+    let maxY = -Infinity
+    for (const b of boxes) {
+      if (b.x < minX) minX = b.x
+      if (b.y < minY) minY = b.y
+      if (b.x + b.w > maxX) maxX = b.x + b.w
+      if (b.y + b.h > maxY) maxY = b.y + b.h
+    }
+    const x = minX - pad
+    const y = minY - pad
+    return { x, y, w: maxX + pad - x, h: maxY + pad - y }
   })
 
   const isOnlySelectedLine = computed(() => {
@@ -679,7 +739,9 @@ export function useWhiteboardSelection(opts: UseWhiteboardSelectionOptions) {
   function hitTest(pt: Point, only?: string[]): string | undefined {
     const tol = 12 / zoom.value
     const allowed = (key: string) => !only || only.includes(key)
-    for (const entry of [...allCanvasItems.value].reverse()) {
+    const items = allCanvasItems.value
+    for (let idx = items.length - 1; idx >= 0; idx--) {
+      const entry = items[idx]!
       if (!allowed(entry.key)) continue
       if (entry.kind === 'sticky') {
         const s = entry.item as StickyElement
@@ -748,9 +810,9 @@ export function useWhiteboardSelection(opts: UseWhiteboardSelectionOptions) {
     for (const key of selected.value) {
       const found = findItem(key)
       if (!found) continue
-      const copy = JSON.parse(JSON.stringify(found.item)) as InkStroke & ShapeElement & ObjectCardElement & StickyElement
+      const copy = clone(found.item) as InkStroke & ShapeElement & ObjectCardElement & StickyElement
       copy.id = newId()
-      copy.zIndex = getMaxZIndex() + 1
+      copy.zIndex = found.kind === 'shape' && isLine(copy) ? 1 : getMaxZIndex() + 1
       if (found.kind === 'stroke') copy.points = copy.points.map((p) => ({ ...p, x: p.x + offset, y: p.y + offset }))
       else {
         copy.x += offset

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onMounted, onUnmounted, provide, ref, watch } from 'vue'
+import { computed, onMounted, onUnmounted, provide, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import type { Direction, Id, ObjectSummary } from '@vasta/core'
 import { api } from '../../lib/api.ts'
@@ -38,7 +38,6 @@ import { useWhiteboardHistory } from './useWhiteboardHistory.ts'
 import { useWhiteboardInteractions } from './useWhiteboardInteractions.ts'
 import { useWhiteboardScenes } from './useWhiteboardScenes.ts'
 import {
-  getStrokeCenter,
   keyOf,
   useWhiteboardSelection,
 } from './useWhiteboardSelection.ts'
@@ -165,7 +164,6 @@ const {
   selectionStartAnchored,
   selectionEndAnchored,
   syncAnchoredConnectors,
-  getConnectorRelationInfo,
 } = selectionState
 
 const historyState = useWhiteboardHistory({
@@ -420,7 +418,7 @@ function appendElements(patch: {
     newSelected.push(keyOf('sticky', st.id))
   }
   for (const sh of patch.shapes ?? []) {
-    sh.zIndex = z++
+    sh.zIndex = isLine(sh) ? 1 : z++
     shapes.value.push(sh)
     newSelected.push(keyOf('shape', sh.id))
   }
@@ -522,6 +520,9 @@ defineExpose({
 })
 
 const polyPath = (pts: Point[]) => pts.map((p, i) => `${i ? 'L' : 'M'} ${p.x} ${p.y}`).join(' ') + ' Z'
+const activeDraftConnectorGeo = computed(() =>
+  currentShape.value && isLine(currentShape.value) ? getConnectorGeometry(currentShape.value) : null
+)
 </script>
 
 <template>
@@ -560,14 +561,14 @@ const polyPath = (pts: Point[]) => pts.map((p, i) => `${i ? 'L' : 'M'} ${p.x} ${
           v-if="entry.kind === 'stroke'"
           class="pointer-events-none absolute left-0 top-0 h-px w-px overflow-visible"
           :style="{ zIndex: entry.zIndex }"
-          :transform="(entry.item as InkStroke).rotation ? `rotate(${(entry.item as InkStroke).rotation} ${getStrokeCenter(entry.item as InkStroke).x} ${getStrokeCenter(entry.item as InkStroke).y})` : undefined"
+          :transform="entry.item.rotation && entry.center ? `rotate(${entry.item.rotation} ${entry.center.x} ${entry.center.y})` : undefined"
         >
           <path
-            :d="(entry.item as InkStroke).points.map((p, i) => `${i ? 'L' : 'M'} ${p.x} ${p.y}`).join(' ')"
-            :stroke="(entry.item as InkStroke).color"
-            :stroke-width="(entry.item as InkStroke).width"
-            :stroke-dasharray="getStrokeDash((entry.item as InkStroke).style)"
-            :opacity="(entry.item as InkStroke).penType === 'highlighter' || (entry.item as InkStroke).style === 'marker' ? 0.45 : 1"
+            :d="entry.pathD"
+            :stroke="entry.item.color"
+            :stroke-width="entry.item.width"
+            :stroke-dasharray="getStrokeDash(entry.item.style)"
+            :opacity="entry.item.penType === 'highlighter' || entry.item.style === 'marker' ? 0.45 : 1"
             stroke-linecap="round"
             stroke-linejoin="round"
             fill="none"
@@ -580,47 +581,81 @@ const polyPath = (pts: Point[]) => pts.map((p, i) => `${i ? 'L' : 'M'} ${p.x} ${
             class="pointer-events-none absolute left-0 top-0 h-px w-px overflow-visible"
             :style="{ zIndex: entry.zIndex }"
           >
-            <g :transform="!isLine(entry.item as ShapeElement) && (entry.item as ShapeElement).rotation ? `rotate(${(entry.item as ShapeElement).rotation} ${(entry.item as ShapeElement).x + (entry.item as ShapeElement).width / 2} ${(entry.item as ShapeElement).y + (entry.item as ShapeElement).height / 2})` : undefined">
-              <template v-if="isLine(entry.item as ShapeElement)">
+            <g :transform="!entry.isLine && entry.item.rotation ? `rotate(${entry.item.rotation} ${entry.item.x + entry.item.width / 2} ${entry.item.y + entry.item.height / 2})` : undefined">
+              <template v-if="entry.isLine && entry.connectorGeo">
                 <path
-                  :d="getConnectorGeometry(entry.item as ShapeElement).shaftPath"
-                  :stroke="(entry.item as ShapeElement).color"
-                  :stroke-width="(entry.item as ShapeElement).strokeWidth || 3"
-                  :stroke-dasharray="getStrokeDash((entry.item as ShapeElement).strokeStyle)"
+                  :d="entry.connectorGeo.shaftPath"
+                  :stroke="entry.item.color"
+                  :stroke-width="entry.item.strokeWidth || 3"
+                  :stroke-dasharray="getStrokeDash(entry.item.strokeStyle)"
                   stroke-linecap="round"
                   stroke-linejoin="round"
                   fill="none"
                 />
                 <path
-                  v-if="getConnectorGeometry(entry.item as ShapeElement).startHead"
-                  :d="getConnectorGeometry(entry.item as ShapeElement).startHead"
-                  :fill="(entry.item as ShapeElement).color"
+                  v-if="entry.connectorGeo.startHead"
+                  :d="entry.connectorGeo.startHead"
+                  :fill="entry.item.color"
                   stroke="none"
                 />
                 <path
-                  v-if="getConnectorGeometry(entry.item as ShapeElement).endHead"
-                  :d="getConnectorGeometry(entry.item as ShapeElement).endHead"
-                  :fill="(entry.item as ShapeElement).color"
+                  v-if="entry.connectorGeo.endHead"
+                  :d="entry.connectorGeo.endHead"
+                  :fill="entry.item.color"
                   stroke="none"
                 />
               </template>
 
               <path
                 v-else
-                :d="shapePath(entry.item as ShapeElement)"
-                :stroke="(entry.item as ShapeElement).color"
-                :stroke-width="(entry.item as ShapeElement).strokeWidth || 3"
-                :stroke-dasharray="getStrokeDash((entry.item as ShapeElement).strokeStyle)"
-                :fill="getShapeFill(entry.item as ShapeElement)"
+                :d="shapePath(entry.item)"
+                :stroke="entry.item.color"
+                :stroke-width="entry.item.strokeWidth || 3"
+                :stroke-dasharray="getStrokeDash(entry.item.strokeStyle)"
+                :fill="getShapeFill(entry.item)"
                 stroke-linecap="round"
                 stroke-linejoin="round"
               />
             </g>
           </svg>
 
+          <!-- Centered Text Label & Inline Editor for 2D Shapes -->
+          <div
+            v-if="!entry.isLine && (entry.item.text || editingId === entry.item.id)"
+            class="pointer-events-none absolute flex items-center justify-center p-2 text-center"
+            :style="{
+              left: `${Math.min(entry.item.x, entry.item.x + entry.item.width)}px`,
+              top: `${Math.min(entry.item.y, entry.item.y + entry.item.height)}px`,
+              width: `${Math.abs(entry.item.width)}px`,
+              height: `${Math.abs(entry.item.height)}px`,
+              zIndex: entry.zIndex + 1,
+              transform: entry.item.rotation ? `rotate(${entry.item.rotation}deg)` : undefined,
+              transformOrigin: 'center center',
+            }"
+          >
+            <textarea
+              v-if="editingId === entry.item.id"
+              :id="`wb-shape-text-${entry.item.id}`"
+              v-model="entry.item.text"
+              placeholder="Label…"
+              class="pointer-events-auto h-full w-full resize-none border-none bg-transparent p-0 text-center text-sm font-semibold leading-snug text-ink outline-none placeholder:opacity-40"
+              @focus="onStickyFocus(entry.item)"
+              @blur="onStickyBlur(entry.item)"
+              @input="notifyChange"
+              @pointerdown.stop
+            />
+            <span
+              v-else
+              class="max-h-full max-w-full overflow-hidden whitespace-pre-wrap break-words text-sm font-semibold leading-snug"
+              :style="{ color: entry.item.fill === 'solid' && !entry.item.fillColor ? '#ffffff' : undefined }"
+            >
+              {{ entry.item.text }}
+            </span>
+          </div>
+
           <!-- On-Canvas Relation Badge for Linked Connectors -->
           <button
-            v-if="isLine(entry.item as ShapeElement) && getConnectorRelationInfo(entry.item as ShapeElement)"
+            v-if="entry.isLine && entry.relationInfo && entry.connectorGeo"
             type="button"
             data-wb-ui
             class="pointer-events-auto absolute flex items-center gap-1 rounded-full border bg-surface/95 px-2 py-0.5 text-[11px] font-semibold shadow-sm backdrop-blur-xs transition-transform hover:scale-105"
@@ -630,27 +665,44 @@ const polyPath = (pts: Point[]) => pts.map((p, i) => `${i ? 'L' : 'M'} ${p.x} ${
                 : 'border-line text-ink hover:border-primary/60'
             "
             :style="{
-              left: `${getConnectorGeometry(entry.item as ShapeElement).labelPoint.x}px`,
-              top: `${getConnectorGeometry(entry.item as ShapeElement).labelPoint.y}px`,
+              left: `${entry.connectorGeo.labelPoint.x}px`,
+              top: `${entry.connectorGeo.labelPoint.y}px`,
               zIndex: entry.zIndex + 1,
               transform:
-                isSelected('shape', entry.item.id) && getConnectorGeometry(entry.item as ShapeElement).midPoint
+                isSelected('shape', entry.item.id) && entry.connectorGeo.midPoint
                   ? 'translate(-50%, -145%)'
                   : 'translate(-50%, -50%)',
             }"
-            :title="`${getConnectorRelationInfo(entry.item as ShapeElement)!.ownerTitle} · ${getConnectorRelationInfo(entry.item as ShapeElement)!.propertyName} → ${getConnectorRelationInfo(entry.item as ShapeElement)!.targetTitle}`"
+            :title="`${entry.relationInfo.ownerTitle} · ${entry.relationInfo.propertyName} → ${entry.relationInfo.targetTitle}`"
             @pointerdown.stop
             @click.stop="onConnectorRelationBadgeClick(entry.item.id)"
           >
             <AppIcon fallback="ph:link-simple" :size="11" class="text-primary shrink-0" />
-            <span class="max-w-36 truncate">{{ getConnectorRelationInfo(entry.item as ShapeElement)!.displayLabel }}</span>
+            <span class="max-w-36 truncate">{{ entry.relationInfo.displayLabel }}</span>
           </button>
+
+          <!-- Plain Text Label Pill for Non-Relation Connectors -->
+          <span
+            v-else-if="entry.isLine && entry.item.text?.trim() && entry.connectorGeo"
+            class="pointer-events-none absolute rounded-full border border-line bg-surface/95 px-2 py-0.5 text-[11px] font-semibold text-ink shadow-xs"
+            :style="{
+              left: `${entry.connectorGeo.labelPoint.x}px`,
+              top: `${entry.connectorGeo.labelPoint.y}px`,
+              zIndex: entry.zIndex + 1,
+              transform:
+                isSelected('shape', entry.item.id) && entry.connectorGeo.midPoint
+                  ? 'translate(-50%, -145%)'
+                  : 'translate(-50%, -50%)',
+            }"
+          >
+            {{ entry.item.text }}
+          </span>
         </template>
 
         <!-- 3. Object Card -->
         <WhiteboardObjectCard
           v-else-if="entry.kind === 'card'"
-          :card="entry.item as ObjectCardElement"
+          :card="entry.item"
           :selected="isSelected('card', entry.item.id)"
           :style="{ zIndex: entry.zIndex }"
           @open="navigateToObject"
@@ -663,33 +715,33 @@ const polyPath = (pts: Point[]) => pts.map((p, i) => `${i ? 'L' : 'M'} ${p.x} ${
           v-else-if="entry.kind === 'sticky'"
           class="absolute flex flex-col rounded-xl border p-3 shadow-md pointer-events-none"
           :style="{
-            left: `${(entry.item as StickyElement).x}px`,
-            top: `${(entry.item as StickyElement).y}px`,
-            width: `${(entry.item as StickyElement).width}px`,
-            height: `${(entry.item as StickyElement).height}px`,
+            left: `${entry.item.x}px`,
+            top: `${entry.item.y}px`,
+            width: `${entry.item.width}px`,
+            height: `${entry.item.height}px`,
             zIndex: entry.zIndex,
-            background: stickyStyle((entry.item as StickyElement).color).bg,
-            borderColor: stickyStyle((entry.item as StickyElement).color).border,
-            color: (entry.item as StickyElement).textColor || stickyStyle((entry.item as StickyElement).color).text,
-            transform: (entry.item as StickyElement).rotation ? `rotate(${(entry.item as StickyElement).rotation}deg)` : undefined,
+            background: entry.palette.bg,
+            borderColor: entry.palette.border,
+            color: entry.item.textColor || entry.palette.text,
+            transform: entry.item.rotation ? `rotate(${entry.item.rotation}deg)` : undefined,
             transformOrigin: 'center center',
             boxShadow: isSelected('sticky', entry.item.id) ? '0 0 0 2px #3b82f6' : undefined,
           }"
         >
           <textarea
             :id="`wb-sticky-${entry.item.id}`"
-            v-model="(entry.item as StickyElement).text"
+            v-model="entry.item.text"
             placeholder="Write a note…"
             class="h-full w-full resize-none border-none bg-transparent p-0 outline-none placeholder:opacity-40"
             :style="{
-              fontSize: STICKY_FONT_SIZES[(entry.item as StickyElement).fontSize || 'md'],
-              color: (entry.item as StickyElement).textColor || stickyStyle((entry.item as StickyElement).color).text,
+              fontSize: STICKY_FONT_SIZES[entry.item.fontSize || 'md'],
+              color: entry.item.textColor || entry.palette.text,
               pointerEvents: editingId === entry.item.id ? 'auto' : 'none',
               userSelect: editingId === entry.item.id ? 'text' : 'none',
               WebkitUserSelect: editingId === entry.item.id ? 'text' : 'none',
             }"
-            @focus="onStickyFocus(entry.item as StickyElement)"
-            @blur="onStickyBlur(entry.item as StickyElement)"
+            @focus="onStickyFocus(entry.item)"
+            @blur="onStickyBlur(entry.item)"
             @input="notifyChange"
             @pointerdown.stop
           />
@@ -710,9 +762,9 @@ const polyPath = (pts: Point[]) => pts.map((p, i) => `${i ? 'L' : 'M'} ${p.x} ${
           fill="none"
         />
         <g v-if="currentShape">
-          <template v-if="isLine(currentShape)">
+          <template v-if="activeDraftConnectorGeo">
             <path
-              :d="getConnectorGeometry(currentShape).shaftPath"
+              :d="activeDraftConnectorGeo.shaftPath"
               :stroke="currentShape.color"
               :stroke-width="currentShape.strokeWidth || 3"
               stroke-linecap="round"
@@ -721,14 +773,14 @@ const polyPath = (pts: Point[]) => pts.map((p, i) => `${i ? 'L' : 'M'} ${p.x} ${
               fill="none"
             />
             <path
-              v-if="getConnectorGeometry(currentShape).startHead"
-              :d="getConnectorGeometry(currentShape).startHead"
+              v-if="activeDraftConnectorGeo.startHead"
+              :d="activeDraftConnectorGeo.startHead"
               :fill="currentShape.color"
               stroke="none"
             />
             <path
-              v-if="getConnectorGeometry(currentShape).endHead"
-              :d="getConnectorGeometry(currentShape).endHead"
+              v-if="activeDraftConnectorGeo.endHead"
+              :d="activeDraftConnectorGeo.endHead"
               :fill="currentShape.color"
               stroke="none"
             />

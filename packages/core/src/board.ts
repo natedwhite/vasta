@@ -863,12 +863,16 @@ export function whiteboardDataToElements(data: Partial<WbData>): BoardElement[] 
 
   for (const stroke of data.strokes ?? []) {
     if (!stroke?.id || !Array.isArray(stroke.points) || stroke.points.length === 0) continue
-    const xs = stroke.points.map((p) => p.x)
-    const ys = stroke.points.map((p) => p.y)
-    const minX = Math.min(...xs)
-    const minY = Math.min(...ys)
-    const maxX = Math.max(...xs)
-    const maxY = Math.max(...ys)
+    let minX = Infinity
+    let minY = Infinity
+    let maxX = -Infinity
+    let maxY = -Infinity
+    for (const p of stroke.points) {
+      if (p.x < minX) minX = p.x
+      if (p.y < minY) minY = p.y
+      if (p.x > maxX) maxX = p.x
+      if (p.y > maxY) maxY = p.y
+    }
     const w = Math.max(1, maxX - minX)
     const h = Math.max(1, maxY - minY)
     const flatPoints: number[] = []
@@ -1012,6 +1016,7 @@ export function elementsToWhiteboardData(
         side: endSide,
       },
       ...(relation ? { relation } : {}),
+      text: el.label,
       boardPath: el.path ?? null,
       zIndex: z++,
     }
