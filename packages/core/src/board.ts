@@ -1122,6 +1122,16 @@ export function elementsToWhiteboardData(
     }
   }
 
+  // Preserve any existing strokes from the whiteboard that were not part of the board elements
+  for (const s of existing?.strokes ?? []) {
+    if (!strokes.some((existingS) => existingS.id === s.id)) {
+      strokes.push({
+        ...s,
+        zIndex: s.zIndex ?? z++,
+      })
+    }
+  }
+
   const defaultSceneId =
     existing?.defaultSceneId && scenes.some((s) => s.id === existing.defaultSceneId)
       ? existing.defaultSceneId

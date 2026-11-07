@@ -236,6 +236,7 @@ watch(
         if (remoteData.defaultSceneId !== undefined) defaultSceneId.value = remoteData.defaultSceneId
         if (remoteData.pan) pan.value = remoteData.pan
         if (remoteData.zoom) zoom.value = remoteData.zoom
+        renormalizeZIndices()
       })
     }
   },
@@ -422,11 +423,13 @@ function appendElements(patch: {
     shapes.value.push(sh)
     newSelected.push(keyOf('shape', sh.id))
   }
+  renormalizeZIndices()
   if (newSelected.length) {
     currentTool.value = 'select'
     selected.value = newSelected
     pushHistory()
   }
+  notifyChange()
 }
 
 function autoLayout(direction: Direction | 'grid' = 'down') {
@@ -435,7 +438,9 @@ function autoLayout(direction: Direction | 'grid' = 'down') {
   stickies.value = laid.stickies
   shapes.value = laid.shapes
   if (laid.scenes) scenes.value = laid.scenes
+  renormalizeZIndices()
   pushHistory()
+  notifyChange()
 }
 
 async function onPaste(e: ClipboardEvent) {
@@ -606,16 +611,23 @@ const activeDraftConnectorGeo = computed(() =>
                 />
               </template>
 
-              <path
-                v-else
-                :d="shapePath(entry.item)"
-                :stroke="entry.item.color"
-                :stroke-width="entry.item.strokeWidth || 3"
-                :stroke-dasharray="getStrokeDash(entry.item.strokeStyle)"
-                :fill="getShapeFill(entry.item)"
-                stroke-linecap="round"
-                stroke-linejoin="round"
-              />
+              <template v-else>
+                <!-- Opaque surface base path so drawings and connectors beneath do not bleed through -->
+                <path
+                  :d="shapePath(entry.item)"
+                  fill="var(--color-surface, #ffffff)"
+                  stroke="none"
+                />
+                <path
+                  :d="shapePath(entry.item)"
+                  :stroke="entry.item.color"
+                  :stroke-width="entry.item.strokeWidth || 3"
+                  :stroke-dasharray="getStrokeDash(entry.item.strokeStyle)"
+                  :fill="getShapeFill(entry.item)"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                />
+              </template>
             </g>
           </svg>
 

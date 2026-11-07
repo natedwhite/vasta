@@ -296,6 +296,12 @@ function open() {
             />
           </template>
           <template v-else>
+            <!-- Base opaque surface so shapes occlude items underneath in preview -->
+            <path
+              :d="shapePath(entry.item)"
+              fill="var(--color-surface, #ffffff)"
+              stroke="none"
+            />
             <path
               :d="shapePath(entry.item)"
               :stroke="entry.item.color"

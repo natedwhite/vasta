@@ -458,18 +458,27 @@ export function useWhiteboardSelection(opts: UseWhiteboardSelectionOptions) {
   }
 
   function ensureZIndices() {
-    let z = 1
     const raw = getAllRawItems()
+    let needsRenormalize = false
     for (const entry of raw) {
+      if (entry.item.zIndex === undefined) {
+        needsRenormalize = true
+        break
+      }
       if (entry.kind === 'shape' && isLine(entry.item as ShapeElement)) {
-        if (entry.item.zIndex === undefined) entry.item.zIndex = z++
+        if (entry.item.zIndex >= 100) {
+          needsRenormalize = true
+          break
+        }
+      } else {
+        if (entry.item.zIndex < 100) {
+          needsRenormalize = true
+          break
+        }
       }
     }
-    z = 100
-    for (const entry of raw) {
-      if (entry.kind !== 'shape' || !isLine(entry.item as ShapeElement)) {
-        if (entry.item.zIndex === undefined) entry.item.zIndex = z++
-      }
+    if (needsRenormalize) {
+      renormalizeZIndices()
     }
   }
   ensureZIndices()
@@ -504,7 +513,7 @@ export function useWhiteboardSelection(opts: UseWhiteboardSelectionOptions) {
         return {
           key: entry.key,
           kind: 'stroke',
-          zIndex: Math.max(s.zIndex ?? 100, 100),
+          zIndex: s.zIndex ?? 100,
           item: s,
           pathD: s.points.map((p, i) => `${i ? 'L' : 'M'} ${p.x} ${p.y}`).join(' '),
           center: s.rotation ? getStrokeCenter(s) : undefined,
@@ -516,7 +525,7 @@ export function useWhiteboardSelection(opts: UseWhiteboardSelectionOptions) {
         return {
           key: entry.key,
           kind: 'shape',
-          zIndex: line ? Math.min(s.zIndex ?? 1, 99) : Math.max(s.zIndex ?? 100, 100),
+          zIndex: line ? (s.zIndex ?? 1) : (s.zIndex ?? 100),
           item: s,
           isLine: line,
           connectorGeo: line ? getConnectorGeometry(s) : undefined,
@@ -528,7 +537,7 @@ export function useWhiteboardSelection(opts: UseWhiteboardSelectionOptions) {
         return {
           key: entry.key,
           kind: 'sticky',
-          zIndex: Math.max(st.zIndex ?? 100, 100),
+          zIndex: st.zIndex ?? 100,
           item: st,
           palette: stickyStyle(st.color),
         }
@@ -537,7 +546,7 @@ export function useWhiteboardSelection(opts: UseWhiteboardSelectionOptions) {
       return {
         key: entry.key,
         kind: 'card',
-        zIndex: Math.max(c.zIndex ?? 100, 100),
+        zIndex: c.zIndex ?? 100,
         item: c,
       }
     })
